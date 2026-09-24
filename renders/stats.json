@@ -1,0 +1,43 @@
+{
+  "faces": 9535,
+  "tris": 19044,
+  "size_mm": [
+    201.39,
+    30.41,
+    138.04
+  ],
+  "objects": {
+    "Slide": {
+      "faces": 1403,
+      "tris": 3330
+    },
+    "Barrel": {
+      "faces": 304,
+      "tris": 648
+    },
+    "RecoilSpringGuide": {
+      "faces": 81,
+      "tris": 158
+    },
+    "Frame": {
+      "faces": 5245,
+      "tris": 10516
+    },
+    "Trigger": {
+      "faces": 379,
+      "tris": 672
+    },
+    "SlideStop": {
+      "faces": 720,
+      "tris": 1260
+    },
+    "MagazineCatch": {
+      "faces": 1024,
+      "tris": 1788
+    },
+    "Magazine": {
+      "faces": 379,
+      "tris": 672
+    }
+  }
+}
