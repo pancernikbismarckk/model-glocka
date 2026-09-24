@@ -40,6 +40,15 @@ def fmt(n):
     return f"{n:,}".replace(",", " ")
 
 
+def plural(n, one, few, many):
+    """Polish plural form for n (1 trójkąt, 2 trójkąty, 5 trójkątów)."""
+    if n == 1:
+        return one
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
 def main():
     with open(os.path.join(R, "stats.json")) as f:
         st = json.load(f)
@@ -54,7 +63,8 @@ def main():
           ("top", "Z góry – okno wyrzutnika")], None),
         ([("cu_grip", "Tekstura RTF Gen4 i logo"), ("cu_trigger", "Spust, zatrzask, kołki"),
           ("cu_rear", "Szczerbinka i nacięcia zamka"), ("cu_muzzle", "Muszka i wylot lufy")], None),
-        ([("hero_wireframe", f"Siatka – {fmt(st['tris'])} trójkątów"),
+        ([("hero_wireframe", f"Siatka – {fmt(st['tris'])} "
+                             f"{plural(st['tris'], 'trójkąt', 'trójkąty', 'trójkątów')}"),
           ("cu_port", "Okno wyrzutnika i wyciąg")], None),
     ]
     label_h = 44
@@ -74,9 +84,11 @@ def main():
     d = ImageDraw.Draw(sheet)
     d.text((pad, 22), "GLOCK 17 Gen4 – model 3D (Blender)", font=font(52, True),
            fill=(20, 20, 22))
-    info = (f"{fmt(st['tris'])} trójkątów  ·  {fmt(st['faces'])} poligonów (quady/n-gony)"
-            f"  ·  {st['size_mm'][0]:.1f} × {st['size_mm'][1]:.1f} × "
-            f"{st['size_mm'][2]:.1f} mm  ·  Cycles")
+    tri_word = plural(st["tris"], "trójkąt", "trójkąty", "trójkątów")
+    face_word = plural(st["faces"], "poligon", "poligony", "poligonów")
+    info = (f"{fmt(st['tris'])} {tri_word}  ·  {fmt(st['faces'])} {face_word} (quady/n-gony)"
+            "  ·  " + " × ".join(f"{v:.1f}".replace(".", ",") for v in st["size_mm"])
+            + " mm  ·  Cycles")
     d.text((pad, 86), info, font=font(28), fill=(90, 90, 96))
     for view, label, x, y, w, h in layout:
         sheet.paste(load(view, w, h), (x, y))
