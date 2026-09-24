@@ -120,7 +120,7 @@ def round_motion(phi):
 
 # ejection of the empty case: ballistic flight after the ejector strikes
 EJECT_AT = 24.0                          # slide travel (mm) at ejection
-EJECT_V = Vector((-0.6, -2.3, 1.7))      # m/s: back, to the right, up
+EJECT_V = Vector((-0.5, -1.7, 1.4))      # m/s: back, to the right, up
 EJECT_W = Vector((0.0, -11.0, -38.0))    # rad/s: tumbling, mouth swings right
 GRAVITY = Vector((0.0, 0.0, -9.81))
 

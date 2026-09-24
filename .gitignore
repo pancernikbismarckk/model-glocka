@@ -3,3 +3,5 @@ __pycache__/
 *.blend1
 tools/cwxml2bin/bin/
 tools/cwxml2bin/obj/
+fivem/_xml/
+renders/_frames/

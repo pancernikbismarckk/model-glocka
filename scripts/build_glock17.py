@@ -965,8 +965,8 @@ def build_muzzle_flash(M):
     """Three crossed flame cards and a star of petals.  Modelled collapsed
     inside the bore (FLASH_REST_SCALE); the fire clip scales it up."""
     bm = bmesh.new()
-    card = [(0.0, 0.0), (5.0, 3.4), (10.0, 2.3), (17.0, 4.8), (25.0, 2.0),
-            (34.0, 0.0), (25.0, -2.0), (17.0, -4.8), (10.0, -2.3), (5.0, -3.4)]
+    card = [(0.0, 0.0), (7.0, 4.6), (14.0, 3.0), (24.0, 6.6), (36.0, 2.6),
+            (50.0, 0.0), (36.0, -2.6), (24.0, -6.6), (14.0, -3.0), (7.0, -4.6)]
     for k in range(3):
         a = math.pi * k / 3
         bm.faces.new([bm.verts.new((x, r * math.cos(a), r * math.sin(a)))
@@ -974,7 +974,7 @@ def build_muzzle_flash(M):
     star = []
     for k in range(12):
         a = 2 * math.pi * k / 12 + math.pi / 12
-        r = 11.0 if k % 2 == 0 else 3.2
+        r = 14.0 if k % 2 == 0 else 3.6
         star.append(bm.verts.new((3.0, r * math.cos(a), r * math.sin(a))))
     bm.faces.new(star)
     s = G.FLASH_REST_SCALE

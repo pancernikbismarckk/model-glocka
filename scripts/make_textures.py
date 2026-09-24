@@ -11,6 +11,8 @@ Writes into textures/:
       Gen4 RTF grip texture (0.1 mm/px): square bumps on the grip panels,
       ridges on the finger grooves of the front strap, moulded GLOCK logos.
       U = arc length around the grip section, V = height (see glock_data).
+  grip_normal_plain.png
+      the same without the logos (unbranded FiveM textures)
 """
 import math
 import os
@@ -140,8 +142,9 @@ def slide_textures():
 # --------------------------------------------------------------------------
 # Grip (Gen4 Rough Textured Frame)
 # --------------------------------------------------------------------------
-def grip_texture():
+def grip_texture(logos=True, filename="grip_normal.png"):
     """Gen4 RTF texture in the grip UV space (U = arc length, V = height).
+    logos=False gives the texture without the moulded GLOCK logos.
 
     The bump lattice is laid out in a shear-free surface chart (c, a):
       c - arc length of the section projected perpendicular to the grip axis,
@@ -185,8 +188,8 @@ def grip_texture():
     panel = (U > s_fl + 0.8) & (U < s_fr - 0.8) & (Z > -118.3) & (Z < z_top)
 
     # ---- logo positions in the chart
-    logos = []
-    for side in (-1, +1):
+    with_logos, logos = logos, []
+    for side in ((-1, +1) if with_logos else ()):
         lu = G.grip_uv_of_point(G.GRIP_LOGO["x"], G.GRIP_LOGO["z"], side)
         jj = int(round(N - (G.GRIP_LOGO["z"] - G.GRIP_TEX_Z0) / mm - 0.5))
         ii = int(round(lu / mm - 0.5))
@@ -241,7 +244,7 @@ def grip_texture():
                                     np.clip(xi, 0, Wl - 1)], 0.0) * 0.22
 
     normal = height_to_normal(height, mm, strength=1.0)
-    normal.save(os.path.join(TEX_DIR, "grip_normal.png"))
+    normal.save(os.path.join(TEX_DIR, filename))
     return height
 
 
@@ -249,4 +252,5 @@ if __name__ == "__main__":
     os.makedirs(TEX_DIR, exist_ok=True)
     slide_textures()
     grip_texture()
+    grip_texture(False, "grip_normal_plain.png")   # unbranded FiveM variant
     print("textures written to", TEX_DIR)
