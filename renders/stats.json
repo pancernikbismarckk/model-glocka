@@ -1,6 +1,6 @@
 {
-  "faces": 9535,
-  "tris": 19044,
+  "faces": 9547,
+  "tris": 19068,
   "size_mm": [
     201.39,
     30.41,
@@ -8,8 +8,8 @@
   ],
   "objects": {
     "Slide": {
-      "faces": 1403,
-      "tris": 3330
+      "faces": 1402,
+      "tris": 3334
     },
     "Barrel": {
       "faces": 304,
@@ -20,8 +20,8 @@
       "tris": 158
     },
     "Frame": {
-      "faces": 5245,
-      "tris": 10516
+      "faces": 5258,
+      "tris": 10536
     },
     "Trigger": {
       "faces": 379,

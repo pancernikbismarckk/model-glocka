@@ -136,7 +136,9 @@ def curve_solid(name, loops_xz, half_width, bevel, res=2, y_center=0.0):
     bpy.data.meshes.remove(me)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    return obj_from_bm(name, bm)
+    ob = obj_from_bm(name, bm)
+    ob["flat_axis"] = "Y"
+    return ob
 
 
 def tube_along(name, path, radius, res=2):
@@ -155,8 +157,12 @@ def tube_along(name, path, radius, res=2):
     me = bpy.data.meshes.new_from_object(tmp.evaluated_get(dg))
     bpy.data.objects.remove(tmp)
     bpy.data.curves.remove(cu)
-    ob = link(bpy.data.objects.new(name, me))
-    return ob
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bpy.data.meshes.remove(me)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)   # weld end caps
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return obj_from_bm(name, bm)
 
 
 def boolean(target, cutter_bm, op="DIFFERENCE"):
@@ -197,15 +203,76 @@ def set_material(ob, mat):
     ob.data.materials.append(mat)
 
 
-def finish_shading(ob, angle=32.0, weighted=True):
+def harden_normals(ob, min_area=2.0, min_width=1.5, flat_deg=0.3):
+    """Hard-surface custom normals.
+
+    Flat regions get their exact plane normal, and faces touching exactly one
+    such region (the first row of a bevel) take that normal at the shared
+    corners.  This removes the shading streaks that long thin cap triangles
+    show when their corner normals are averaged with the bevel next to them.
+
+    Flat regions are wide coplanar regions (area >= min_area mm2, width >=
+    min_width mm) and, when ob["flat_axis"] is set, every face perpendicular
+    to that axis (the caps of extruded profiles).  ob["flat_width"] = False
+    disables the width rule (the lofted grip must stay smooth)."""
+    axis = ob.get("flat_axis")
+    use_width = ob.get("flat_width", True)
+    me = ob.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+    nf = len(bm.faces)
+    region = [-1] * nf
+    rnorm, flat_region = [], []
+    cos_t = math.cos(math.radians(flat_deg))
+    for f in bm.faces:
+        if region[f.index] >= 0:
+            continue
+        rid = len(rnorm)
+        region[f.index] = rid
+        n0 = f.normal.copy()
+        stack, area = [f], 0.0
+        lo = Vector((1e9, 1e9, 1e9))
+        hi = Vector((-1e9, -1e9, -1e9))
+        while stack:
+            g = stack.pop()
+            area += g.calc_area()
+            for v in g.verts:
+                for i in range(3):
+                    lo[i] = min(lo[i], v.co[i])
+                    hi[i] = max(hi[i], v.co[i])
+            for e in g.edges:
+                for h in e.link_faces:
+                    if region[h.index] < 0 and h.normal.dot(n0) > cos_t:
+                        region[h.index] = rid
+                        stack.append(h)
+        diag = max((hi - lo).length, 1e-6)
+        rnorm.append(n0)
+        is_flat = use_width and area >= min_area and area / diag >= min_width
+        if axis and abs(n0["XYZ".index(axis)]) > 0.99995:
+            is_flat = True
+        flat_region.append(is_flat)
+    flat = [flat_region[region[i]] for i in range(nf)]
+    normals = [(0.0, 0.0, 0.0)] * len(me.loops)       # zero = automatic normal
+    for poly, f in zip(me.polygons, bm.faces):
+        for li, loop in zip(poly.loop_indices, f.loops):
+            if flat[f.index]:
+                normals[li] = tuple(rnorm[region[f.index]])
+                continue
+            cands = {region[g.index] for g in loop.vert.link_faces
+                     if flat[g.index] and rnorm[region[g.index]].dot(f.normal) > 0.5}
+            if len(cands) == 1:
+                normals[li] = tuple(rnorm[cands.pop()])
+    bm.free()
+    me.normals_split_custom_set(normals)
+
+
+def finish_shading(ob, angle=32.0, harden=True):
     me = ob.data
     me.shade_smooth()
     me.set_sharp_from_angle(angle=math.radians(angle))
-    if weighted:
-        m = ob.modifiers.new("wn", "WEIGHTED_NORMAL")
-        m.keep_sharp = True
-        m.weight = 50
-        apply_modifiers(ob)
+    if harden:
+        harden_normals(ob)
 
 
 def ensure_uv(ob, name="UVMap"):
@@ -335,6 +402,7 @@ def build_slide(M):
         else:
             e[bw] = 0.2 if abs(a.co.z + H) < 1e-4 else 0.16
     slide = obj_from_bm("Slide", bm)
+    slide["flat_axis"] = "Y"
     bevel_mod(slide, 2.2, segments=3, limit="WEIGHT")
     apply_modifiers(slide)
 
@@ -389,7 +457,7 @@ def build_slide(M):
     for p in parts[1:]:
         ensure_uv(p)
     for p in parts:
-        finish_shading(p, 32.0, weighted=(p is slide))
+        finish_shading(p, 32.0)
     return join(parts, "Slide")
 
 
@@ -424,20 +492,22 @@ def build_sights(M):
     apply_modifiers(rear)
     set_material(rear, M["polymer"])
 
-    # white "U" outline on the rear face (sheared onto the sloped face)
-    u_outer, u_in = 3.7, 2.9
-    ushape = [(-u_outer, 0.75), (u_outer, 0.75), (u_outer, top - 0.05),
-              (u_in, top - 0.05), (u_in, 1.55), (-u_in, 1.55),
-              (-u_in, top - 0.05), (-u_outer, top - 0.05)]
+    # white "U" outline on the rear face (sheared onto the sloped face),
+    # built from five quads: two corners, bottom bar and two side bars
+    uo, ui, zb, zi, zt = 3.7, 2.9, 0.75, 1.55, top - 0.05
     bm = bmesh.new()
-    vs = [bm.verts.new((0.0, y, z)) for y, z in ushape]
-    bm.faces.new(vs)
-    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    V = {k: bm.verts.new((0.0, y, z)) for k, (y, z) in {
+        "A": (-uo, zb), "B": (-ui, zb), "C": (ui, zb), "D": (uo, zb),
+        "K": (-uo, zi), "H": (-ui, zi), "G": (ui, zi), "L": (uo, zi),
+        "J": (-uo, zt), "I": (-ui, zt), "F": (ui, zt), "E": (uo, zt)}.items()}
+    for quad in ("ABHK", "KHIJ", "BCGH", "CDLG", "GLEF"):
+        bm.faces.new([V[c] for c in quad])
     slope = 2.7 / top
     nrm = Vector((1.0, 0.0, slope)).normalized()
     for v in bm.verts:
         v.co.x = rs["x1"] - slope * v.co.z
         v.co += nrm * 0.03
+    bm.normal_update()
     for f in bm.faces:
         if f.normal.dot(nrm) < 0:
             f.normal_flip()
@@ -507,7 +577,7 @@ def build_barrel(M):
     set_material(hood, M["barrel"])
     for p in (tube, hood):
         ensure_uv(p)
-        finish_shading(p, 32.0, weighted=False)
+        finish_shading(p, 32.0)
     return join([tube, hood], "Barrel")
 
 
@@ -534,7 +604,7 @@ def build_recoil_guide(M):
     ob = obj_from_bm("RecoilSpringGuide", bm)
     set_material(ob, M["steel"])
     ensure_uv(ob)
-    finish_shading(ob, 40.0, weighted=False)
+    finish_shading(ob, 40.0)
     return ob
 
 
@@ -570,6 +640,8 @@ def build_grip(M):
                            0.93 + loop.vert.co.y * 1e-4)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     ob = obj_from_bm("Grip", bm)
+    ob["flat_axis"] = "Z"
+    ob["flat_width"] = False
     set_material(ob, M["grip"])
     return ob
 
@@ -632,7 +704,7 @@ def build_frame(M):
     parts.append(guard)
 
     for p in parts:
-        finish_shading(p, 38.0, weighted=(p is not grip))
+        finish_shading(p, 38.0)
     frame = join(parts, "Frame")
 
     # ---- small metal parts that live in the frame
@@ -674,10 +746,10 @@ def build_frame(M):
     for o in metal:
         set_material(o, M["steel"])
         ensure_uv(o)
-        finish_shading(o, 40.0, weighted=False)
+        finish_shading(o, 40.0)
     set_material(plate, M["plate"])
     ensure_uv(plate)
-    finish_shading(plate, 40.0, weighted=False)
+    finish_shading(plate, 40.0)
     return join([frame] + metal + [plate], "Frame")
 
 
@@ -704,7 +776,7 @@ def build_trigger(M):
     for p in (trig, blade):
         set_material(p, M["polymer"])
         ensure_uv(p)
-        finish_shading(p, 40.0, weighted=False)
+        finish_shading(p, 40.0)
     return join([trig, blade], "Trigger")
 
 
@@ -722,7 +794,7 @@ def build_slide_stop(M):
     for p in parts:
         set_material(p, M["steel"])
         ensure_uv(p)
-        finish_shading(p, 40.0, weighted=False)
+        finish_shading(p, 40.0)
     return join(parts, "SlideStop")
 
 
@@ -750,7 +822,7 @@ def build_mag_catch(M):
     for p in parts:
         set_material(p, M["polymer"])
         ensure_uv(p)
-        finish_shading(p, 40.0, weighted=False)
+        finish_shading(p, 40.0)
     return join(parts, "MagazineCatch")
 
 
@@ -766,7 +838,7 @@ def build_magazine(M):
     for p in (plate, body):
         set_material(p, M["polymer"])
         ensure_uv(p)
-        finish_shading(p, 38.0, weighted=(p is plate))
+        finish_shading(p, 38.0)
     return join([plate, body], "Magazine")
 
 
@@ -950,6 +1022,7 @@ VIEWS = {
     "cu_muzzle":   ((10.0, 0.0, -22.0), 0.30, 55.0, 10.0, 100, None),
     "cu_sight":    ((174.0, 0.0, 1.0), 0.16, -75.0, 8.0, 100, None),
     "bottom":      ((100.7, 0.0, -64.8), 1.05, 150.0, -55.0, 100, None),
+    "cu_trigger_low": ((96.0, 0.0, -50.0), 0.30, 28.0, -22.0, 100, None),
     "cu_port":     ((105.0, 8.0, -8.0), 0.30, 160.0, 28.0, 100, None),
 }
 MAIN_VIEWS = ["hero", "left", "right", "right_rear", "front", "top"]

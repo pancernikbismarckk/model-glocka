@@ -199,8 +199,10 @@ FRAME_BODY_HW = 13.25
 
 # Trigger guard outer outline (13.8 mm wide).  The top part is hidden in the
 # dust cover / frame body; the concave fillet under the dust cover is explicit.
+# Keep the hidden band above the opening thicker than 2 x the edge bevel,
+# otherwise the curve fill self-intersects and fills part of the opening.
 TG_OUTER = (
-    [(58.0, -36.0), (63.3, -37.4)]
+    [(58.0, -30.0), (61.5, -30.0), (63.3, -37.4)]
     + arc_pts(64.1, -44.9, 7.0, 90, 0, 7)
     + rounded_poly([
         (70.0, -44.9),          # dummy neighbour (removed below)
@@ -211,7 +213,7 @@ TG_OUTER = (
         (119.8, -63.1, 0.0),
         (124.0, -62.0, 0.0),
     ], seg90=6)[1:]
-    + [(124.0, -36.0)]
+    + [(124.0, -30.0)]
 )
 
 # Trigger guard opening (hole), explicit smooth outline
