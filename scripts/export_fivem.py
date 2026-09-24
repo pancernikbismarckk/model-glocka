@@ -20,6 +20,7 @@ The README.md of the resource is not generated.
 """
 import importlib
 import io
+import math
 import os
 import shutil
 import struct
@@ -28,7 +29,7 @@ import sys
 
 import bpy
 import numpy as np
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -64,20 +65,21 @@ WEAPON_PARTS = {
 }
 MAG_PARTS = ["Magazine", "MagazineRound"]
 
-# GTA V shader look (normal_spec): palette swatch per Blender material:
-# (diffuse sRGB, specular intensity 0-255, glossiness 0-255)
-PALETTE = {
-    "Polymer_Frame": ((30, 30, 32), 60, 110),
-    "Slide_Nitride": ((46, 47, 50), 150, 215),
-    "Barrel_Nitride": ((62, 62, 64), 170, 225),
-    "Steel_Black": ((36, 36, 38), 140, 200),
-    "Sight_White": ((225, 225, 220), 40, 90),
-    "Serial_Plate": ((150, 150, 150), 180, 220),
-    "Bore_Dark": ((10, 10, 10), 30, 60),
-    "Brass_Case": ((180, 140, 72), 200, 220),
-    "Copper_Jacket": ((175, 104, 64), 190, 210),
+# GTA V look (normal_spec) of every Blender material:
+# (texture key, diffuse sRGB, specular intensity 0-255, glossiness 0-255,
+#  surface: "polymer" = stippled, "metal" = fine grain)
+MATERIALS = {
+    "Polymer_Frame": ("polymer", (21, 21, 22), 45, 90, "polymer"),
+    "Slide_Nitride": ("nitride", (23, 23, 25), 120, 200, "metal"),
+    "Barrel_Nitride": ("barrel", (29, 29, 31), 140, 210, "metal"),
+    "Steel_Black": ("steel", (19, 19, 20), 110, 190, "metal"),
+    "Sight_White": ("white", (215, 215, 210), 40, 90, "polymer"),
+    "Serial_Plate": ("plate", (118, 118, 116), 160, 200, "metal"),
+    "Bore_Dark": ("bore", (8, 8, 8), 30, 60, "metal"),
+    "Brass_Case": ("brass", (170, 130, 66), 190, 210, "metal"),
+    "Copper_Jacket": ("copper", (165, 98, 60), 180, 200, "metal"),
 }
-PAL_CELL, PAL_GRID = 16, 4                 # 64 x 64 palette, 16 px swatches
+TILE_M = 0.025          # the tiling textures cover 25 x 25 mm
 SHADER_PARAMS = {"bumpiness": 1.0, "specularIntensityMult": 0.9647,
                  "specularFalloffMult": 26.58, "specularFresnel": 0.75,
                  "specMapIntMask": (1.0, 0.0, 0.0), "HardAlphaBlend": 1.0,
@@ -91,24 +93,35 @@ def _arg(name, default=None):
 # ==========================================================================
 # DDS textures (DXT5 with a full mip chain)
 # ==========================================================================
-def dds_write(img, path):
-    """Save an RGBA image as DXT5 DDS with mipmaps down to 4 x 4."""
+def dds_write(img, path, fmt="DXT5"):
+    """Save an RGBA image as DDS with mipmaps down to 4 x 4: DXT5, or
+    uncompressed A8R8G8B8 (fmt="ARGB", for the near-black colour maps, which
+    DXT's 16-bit colours would tint blue or green)."""
     img = img.convert("RGBA")
     levels, im = [], img
     while True:
-        buf = io.BytesIO()
-        im.save(buf, "DDS", pixel_format="DXT5")
-        data = buf.getvalue()
-        levels.append(data[128:])
+        if fmt == "DXT5":
+            buf = io.BytesIO()
+            im.save(buf, "DDS", pixel_format="DXT5")
+            levels.append(buf.getvalue()[128:])
+        else:
+            a = np.asarray(im)
+            levels.append(a[..., [2, 1, 0, 3]].tobytes())      # BGRA
         if min(im.size) <= 4:
             break
         im = im.resize((max(1, im.width // 2), max(1, im.height // 2)),
                        Image.Resampling.BOX)
     w, h = img.size
-    flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000
-    header = struct.pack("<4sIIIIIII44x", b"DDS ", 124, flags, h, w,
-                         len(levels[0]), 0, len(levels))
-    header += struct.pack("<II4s20x", 32, 0x4, b"DXT5")
+    size_flag = 0x80000 if fmt == "DXT5" else 0x8           # linear size / pitch
+    flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | size_flag
+    pitch = len(levels[0]) if fmt == "DXT5" else w * 4
+    header = struct.pack("<4sIIIIIII44x", b"DDS ", 124, flags, h, w, pitch, 0,
+                         len(levels))
+    if fmt == "DXT5":
+        header += struct.pack("<II4s20x", 32, 0x4, b"DXT5")
+    else:
+        header += struct.pack("<II4xIIIII", 32, 0x41, 32, 0x00FF0000,
+                              0x0000FF00, 0x000000FF, 0xFF000000)
     header += struct.pack("<IIII4x", 0x1000 | 0x400000 | 0x8, 0, 0, 0)
     assert len(header) == 128
     with open(path, "wb") as f:
@@ -116,7 +129,8 @@ def dds_write(img, path):
         for lv in levels:
             f.write(lv)
     return {"name": os.path.splitext(os.path.basename(path))[0],
-            "width": w, "height": h, "mips": len(levels)}
+            "width": w, "height": h, "mips": len(levels),
+            "format": "D3DFMT_DXT5" if fmt == "DXT5" else "D3DFMT_A8R8G8B8"}
 
 
 def flip_green(img):
@@ -126,68 +140,115 @@ def flip_green(img):
     return Image.fromarray(a, "RGBA")
 
 
-def solid(rgb, alpha=255, size=32):
-    return Image.new("RGBA", (size, size), (*rgb, alpha))
+def periodic_noise(n, sigma_px, seed, shape=None):
+    """Tileable smooth noise in [-1, 1] (white noise low-passed with a
+    Gaussian in the frequency domain, so it wraps around seamlessly)."""
+    h, w = shape or (n, n)
+    rng = np.random.default_rng(seed)
+    f = np.fft.fft2(rng.standard_normal((h, w)))
+    ky = np.fft.fftfreq(h)[:, None]
+    kx = np.fft.fftfreq(w)[None, :]
+    f *= np.exp(-2.0 * (np.pi * sigma_px) ** 2 * (kx ** 2 + ky ** 2))
+    a = np.real(np.fft.ifft2(f))
+    return a / (np.abs(a).max() + 1e-9)
 
 
-def palette_uv(index):
-    """Blender UV of the centre of palette swatch `index`."""
-    gx, gy = index % PAL_GRID, index // PAL_GRID
-    n = PAL_CELL * PAL_GRID
-    return ((gx + 0.5) * PAL_CELL / n, 1.0 - (gy + 0.5) * PAL_CELL / n)
+def normal_from_height(hgt, strength):
+    """Tileable height field -> GTA (DirectX) normal map image."""
+    dx = (np.roll(hgt, -1, 1) - np.roll(hgt, 1, 1)) * 0.5 * strength
+    dy = (np.roll(hgt, -1, 0) - np.roll(hgt, 1, 0)) * 0.5 * strength
+    nz = 1.0 / np.sqrt(1.0 + dx * dx + dy * dy)
+    rgb = np.dstack([-dx * nz, dy * nz, nz])        # rows go down: DirectX
+    a = np.clip((rgb * 0.5 + 0.5) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    return Image.fromarray(np.dstack([a, np.full(a.shape[:2], 255, np.uint8)]),
+                           "RGBA")
 
 
-def make_textures(folder, unbranded=False):
-    """Write the DDS files; returns {texture name: info}.  unbranded: plain
-    slide (no engravings) and the grip texture without the GLOCK logos."""
+def surface_fields(kind, shape, seed):
+    """(colour variation, height) fields for a surface type."""
+    fine = periodic_noise(0, 0.8, seed, shape)
+    mid = periodic_noise(0, 3.0, seed + 1, shape)
+    coarse = periodic_noise(0, 18.0, seed + 2, shape)
+    if kind == "polymer":           # moulded stipple, slight mottling
+        return 0.55 * mid + 0.45 * coarse, 0.7 * fine + 0.3 * mid
+    return 0.7 * fine + 0.3 * coarse, fine              # nitride grain
+
+
+def textured(rgb, spec, gloss, kind, shape, seed):
+    """Diffuse and specular images with the surface variation of `kind`."""
+    var, _ = surface_fields(kind, shape, seed)
+    amp = 0.22 if kind == "polymer" else 0.10
+    d = np.clip(np.array(rgb, np.float32) * (1.0 + amp * var[..., None]), 0, 255)
+    sp = np.clip(spec * (1.0 + 0.15 * var), 0, 255)
+    gl = np.clip(gloss * (1.0 + 0.12 * var), 0, 255)
+    dif = Image.fromarray(np.dstack([d, np.full(shape, 255.0)])
+                          .astype(np.uint8), "RGBA")
+    spc = Image.fromarray(np.dstack([sp, sp, sp, gl]).astype(np.uint8), "RGBA")
+    return dif, spc
+
+
+def make_textures(folder, unbranded=False, keys=None):
+    """Write the DDS files; returns {texture name: info}.  unbranded: slide
+    without engravings and grip without the GLOCK logos.  keys limits the
+    tiling material textures (the magazine needs only a few)."""
     os.makedirs(folder, exist_ok=True)
     tex = {}
 
     def put(name, img):
-        tex[name] = dds_write(img, os.path.join(folder, name + ".dds"))
+        fmt = "ARGB" if name.endswith("_d") else "DXT5"
+        tex[name] = dds_write(img, os.path.join(folder, name + ".dds"), fmt)
 
-    n = PAL_CELL * PAL_GRID
-    dif = np.full((n, n, 4), (*PALETTE["Polymer_Frame"][0], 255), np.uint8)
-    spc = np.full((n, n, 4), (60, 60, 60, 110), np.uint8)   # unused swatches
-    for i, (rgb, s, gl) in enumerate(PALETTE.values()):
-        gx, gy = i % PAL_GRID, i // PAL_GRID
-        sl = np.s_[gy * PAL_CELL:(gy + 1) * PAL_CELL,
-                   gx * PAL_CELL:(gx + 1) * PAL_CELL]
-        dif[sl] = (*rgb, 255)
-        spc[sl] = (s, s, s, gl)
-    put("glock17_pal_d", Image.fromarray(dif, "RGBA"))
-    put("glock17_pal_s", Image.fromarray(spc, "RGBA"))
-    put("glock17_flat_n", solid((128, 128, 255)))
+    n = 256
+    for i, (key, rgb, sp, gl, kind) in enumerate(MATERIALS.values()):
+        if keys is not None and key not in keys:
+            continue
+        dif, spc = textured(rgb, sp, gl, kind, (n, n), 10 * i)
+        put(f"glock17_{key}_d", dif)
+        put(f"glock17_{key}_s", spc)
+    for kind, strength, seed in (("polymer", 3.0, 101), ("metal", 0.6, 102)):
+        _, hgt = surface_fields(kind, (n, n), seed)
+        put(f"glock17_{kind}_n", normal_from_height(hgt, strength))
+    if keys is not None:
+        return tex
 
     td = B.TEX_DIR
+    _, rgb, sp, gl, _ = MATERIALS["Polymer_Frame"]
     grip = "grip_normal_plain.png" if unbranded else "grip_normal.png"
     put("glock17_grip_n", flip_green(Image.open(os.path.join(td, grip))
                                      .convert("RGBA")
                                      .resize((1024, 1024),
                                              Image.Resampling.LANCZOS)))
-    put("glock17_grip_d", solid(PALETTE["Polymer_Frame"][0]))
-    put("glock17_grip_s", solid((50, 50, 50), 95))
+    # the grip texture covers 204.8 mm: noise at the tiling textures' density
+    dif, spc = textured(rgb, sp, gl, "polymer", (1024, 1024), 200)
+    put("glock17_grip_d", dif)
+    put("glock17_grip_s", spc)
+
+    # left side of the slide (204.8 x 25.6 mm) with the engravings
+    _, rgb, sp, gl, _ = MATERIALS["Slide_Nitride"]
+    dif, spc = textured(rgb, sp, gl, "metal", (256, 2048), 300)
     if unbranded:
-        rgb, sp, gl = PALETTE["Slide_Nitride"]
-        put("glock17_slide_d", Image.new("RGBA", (64, 8), (*rgb, 255)))
-        put("glock17_slide_n", Image.new("RGBA", (64, 8), (128, 128, 255, 255)))
-        put("glock17_slide_s", Image.new("RGBA", (64, 8), (sp, sp, sp, gl)))
+        put("glock17_slide_d", dif)
+        put("glock17_slide_s", spc)
+        _, hgt = surface_fields("metal", (256, 2048), 301)
+        put("glock17_slide_n", normal_from_height(hgt, 0.6))
         return tex
-    # slide markings: the Blender texture is linear 0.16 (base) .. 0.26
+    # engravings: the Blender texture is linear 0.16 (base) .. 0.26 (cut)
     col = np.asarray(Image.open(os.path.join(td, "slide_markings_color.png"))
-                     .convert("RGB"), np.float32) / 255.0
+                     .convert("L").resize((2048, 256), Image.Resampling.LANCZOS),
+                     np.float32) / 255.0
     lin = np.where(col <= 0.04045, col / 12.92, ((col + 0.055) / 1.055) ** 2.4)
-    base = np.array(PALETTE["Slide_Nitride"][0], np.float32)
-    rgb = np.clip(base * lin / 0.16, 0, 255).astype(np.uint8)
-    sd = Image.fromarray(rgb, "RGB").resize((2048, 256), Image.Resampling.LANCZOS)
-    put("glock17_slide_d", sd)
+    cut = np.clip((lin - 0.16) / 0.10, 0, 1)[..., None]
+    d = np.asarray(dif, np.float32)
+    d[..., :3] = d[..., :3] * (1.0 - cut) + np.array((70, 70, 72)) * cut
+    put("glock17_slide_d", Image.fromarray(d.astype(np.uint8), "RGBA"))
     rough = np.asarray(Image.open(os.path.join(td, "slide_markings_rough.png"))
                        .convert("L").resize((2048, 256), Image.Resampling.LANCZOS),
                        np.float32) / 255.0
     k = np.clip((rough - 0.4) / 0.25, 0, 1)
-    s = (150 - 70 * k).astype(np.uint8)
-    gl = (215 - 95 * k).astype(np.uint8)
-    put("glock17_slide_s", Image.fromarray(np.dstack([s, s, s, gl]), "RGBA"))
+    sa = np.asarray(spc, np.float32)
+    sa[..., :3] *= (1.0 - 0.5 * k)[..., None]
+    sa[..., 3] *= 1.0 - 0.45 * k
+    put("glock17_slide_s", Image.fromarray(sa.astype(np.uint8), "RGBA"))
     nrm = Image.open(os.path.join(td, "slide_markings_normal.png")).convert("RGBA")
     put("glock17_slide_n", flip_green(nrm.resize((2048, 256),
                                                   Image.Resampling.LANCZOS)))
@@ -206,7 +267,7 @@ def write_ytd_xml(path, textures):
    <Width value="{t['width']}" />
    <Height value="{t['height']}" />
    <MipLevels value="{t['mips']}" />
-   <Format>D3DFMT_DXT5</Format>
+   <Format>{t['format']}</Format>
    <FileName>{t['name']}.dds</FileName>
   </Item>""")
     with open(path, "w", encoding="utf-8") as f:
@@ -316,9 +377,17 @@ def joined_copy(parts, name, groups, xform=None):
     return joined
 
 
+def box_uv(co, normal):
+    """Box projection (in metres) for the tiling textures."""
+    ax = max(range(3), key=lambda i: abs(normal[i]))
+    u, v = [i for i in range(3) if i != ax]
+    return co[u] / TILE_M, co[v] / TILE_M
+
+
 def assign_gta_materials(ob, mats):
-    """Swap the Blender materials for the GTA shaders, set palette UVs,
-    rename the UV map for Sollumz and add the vertex colour layer."""
+    """Swap the Blender materials for the GTA shaders, box-project UVs for
+    the tiling textures, rename the UV map for Sollumz and add the vertex
+    colour layer."""
     me = ob.data
     uv = me.uv_layers[0]
     uv.name = "UVMap 0"
@@ -326,21 +395,19 @@ def assign_gta_materials(ob, mats):
     targets = []
     for mname in old:
         if mname == "Slide_Nitride_Markings":
-            targets.append(mats["slide"])
+            targets.append(mats["slide_marked"])
         elif mname == "Polymer_Grip_RTF":
             targets.append(mats["grip"])
         else:
-            targets.append(mats["main"])
+            targets.append(mats[MATERIALS[mname][0]])
     uniq = list(dict.fromkeys(targets))
     remap = [uniq.index(t) for t in targets]
-    pal_index = {m: i for i, m in enumerate(PALETTE)}
     new_index = []
     for poly in me.polygons:
-        mname = old[poly.material_index]
-        if mname in pal_index:
-            u, v = palette_uv(pal_index[mname])
+        if old[poly.material_index] in MATERIALS:
             for li in poly.loop_indices:
-                uv.data[li].uv = (u, v)
+                co = me.vertices[me.loops[li].vertex_index].co
+                uv.data[li].uv = box_uv(co, poly.normal)
         new_index.append(remap[poly.material_index])
     me.materials.clear()                     # (this resets material_index)
     for m in uniq:
@@ -349,6 +416,74 @@ def assign_gta_materials(ob, mats):
     me.update()
     col = me.color_attributes.new("Color 1", "BYTE_COLOR", "CORNER")
     col.data.foreach_set("color", [1.0] * (4 * len(me.loops)))
+
+
+def add_mag_bounds(xml_path, ctr, half):
+    """Embed a collision box (like the game's pistol magazines) so the
+    magazine dropped during a reload falls to the ground.  ctr: box centre
+    in the drawable, half: half extents across / sideways / along."""
+    a = math.radians(G.MAG_ANGLE)
+    c, s = math.cos(a), math.sin(a)
+    ctr, half = np.array(ctr, float), np.array(half, float)
+    # rows = box axes: across the magazine, sideways, along (up and forward)
+    R = np.array([[c, 0.0, -s], [0.0, 1.0, 0.0], [s, 0.0, c]])
+    corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1)
+                        for sz in (-1, 1)]) * half @ R + ctr
+    bmin, bmax = corners.min(0), corners.max(0)
+    radius = float(np.linalg.norm(half))
+    dims = 2.0 * half
+    vol = float(np.prod(dims))
+    inertia = [(dims[1] ** 2 + dims[2] ** 2) / 12, (dims[0] ** 2 + dims[2] ** 2) / 12,
+               (dims[0] ** 2 + dims[1] ** 2) / 12]
+
+    def v3(tag, v):
+        return f'<{tag} x="{v[0]:.7g}" y="{v[1]:.7g}" z="{v[2]:.7g}" />'
+
+    common = f"""<Volume value="{vol:.7g}" />
+    {v3("Inertia", inertia)}
+    <MaterialIndex value="0" />
+    <MaterialColourIndex value="0" />
+    <ProceduralID value="0" />
+    <RoomID value="0" />
+    <PedDensity value="0" />
+    <UnkFlags value="0" />
+    <PolyFlags value="0" />
+    <UnkType value="2" />"""
+    rows = "\n".join("     " + " ".join(f"{x:.7g}" for x in r) + " 0"
+                      for r in R) + "\n     " + " ".join(
+                          f"{x:.7g}" for x in ctr) + " 1"
+    block = f""" <Bounds type="Composite">
+  {v3("BoxMin", bmin)}
+  {v3("BoxMax", bmax)}
+  {v3("BoxCenter", (bmin + bmax) / 2)}
+  {v3("SphereCenter", ctr)}
+  <SphereRadius value="{radius:.7g}" />
+  <Margin value="0" />
+  {common}
+  <Children>
+   <Item type="Box">
+    {v3("BoxMin", -half)}
+    {v3("BoxMax", half)}
+    {v3("BoxCenter", (0, 0, 0))}
+    {v3("SphereCenter", (0, 0, 0))}
+    <SphereRadius value="{radius:.7g}" />
+    <Margin value="0.04" />
+    {common}
+    <CompositeTransform>
+{rows}
+    </CompositeTransform>
+    <CompositeFlags1>MAP_WEAPON, MAP_DYNAMIC, MAP_ANIMAL, MAP_COVER, MAP_VEHICLE</CompositeFlags1>
+    <CompositeFlags2>VEHICLE_NOT_BVH, VEHICLE_BVH, PED, RAGDOLL, ANIMAL, ANIMAL_RAGDOLL, OBJECT, PLANT, PROJECTILE, EXPLOSION, FORKLIFT_FORKS, TEST_WEAPON, TEST_CAMERA, TEST_AI, TEST_SCRIPT, TEST_VEHICLE_WHEEL, GLASS</CompositeFlags2>
+   </Item>
+  </Children>
+ </Bounds>
+"""
+    with open(xml_path, encoding="utf-8") as f:
+        text = f.read()
+    assert "<Bounds" not in text and "</Drawable>" in text
+    text = text.replace("</Drawable>", block + "</Drawable>", 1)
+    with open(xml_path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def make_model(SZ, ob, drawable):
@@ -484,20 +619,20 @@ def main():
     tex_dir = os.path.join(XML, MODEL)             # cwxml2bin texture folder
     tex = make_textures(tex_dir)
     tpath = {n: os.path.join(tex_dir, n + ".dds") for n in tex}
-    mats = {
-        "main": gta_material(SZ, "glock17_main", {
-            "DiffuseSampler": tpath["glock17_pal_d"],
-            "BumpSampler": tpath["glock17_flat_n"],
-            "SpecSampler": tpath["glock17_pal_s"]}),
-        "slide": gta_material(SZ, "glock17_slide", {
-            "DiffuseSampler": tpath["glock17_slide_d"],
-            "BumpSampler": tpath["glock17_slide_n"],
-            "SpecSampler": tpath["glock17_slide_s"]}),
-        "grip": gta_material(SZ, "glock17_grip", {
-            "DiffuseSampler": tpath["glock17_grip_d"],
-            "BumpSampler": tpath["glock17_grip_n"],
-            "SpecSampler": tpath["glock17_grip_s"]}),
-    }
+    mats = {}
+    for key, _, _, _, kind in MATERIALS.values():
+        mats[key] = gta_material(SZ, f"glock17_{key}", {
+            "DiffuseSampler": tpath[f"glock17_{key}_d"],
+            "BumpSampler": tpath[f"glock17_{kind}_n"],
+            "SpecSampler": tpath[f"glock17_{key}_s"]})
+    mats["slide_marked"] = gta_material(SZ, "glock17_slide_marked", {
+        "DiffuseSampler": tpath["glock17_slide_d"],
+        "BumpSampler": tpath["glock17_slide_n"],
+        "SpecSampler": tpath["glock17_slide_s"]})
+    mats["grip"] = gta_material(SZ, "glock17_grip", {
+        "DiffuseSampler": tpath["glock17_grip_d"],
+        "BumpSampler": tpath["glock17_grip_n"],
+        "SpecSampler": tpath["glock17_grip_s"]})
 
     # ---- weapon drawable (skinned to the pistol skeleton)
     rest = {b.name: b.matrix_local.copy() for b in rig.data.bones}
@@ -543,14 +678,22 @@ def main():
                 xml_files.append(os.path.join(dirpath, f))
     print("xml:", xml_files)
 
+    # collision box of the magazine body (drawable space = WAPClip at 0)
+    z_mid = (G.MAG_ZB + G.MAG_ZT) / 2
+    x_mid = sum(G.mag_x_range(z_mid)) / 2
+    ctr = B.XF @ Vector((x_mid, 0.0, z_mid)) - clip_at
+    length = (G.MAG_ZT - G.MAG_ZB) / math.cos(math.radians(G.MAG_ANGLE))
+    depth = (G.MAG_X1 - G.MAG_X0) * math.cos(math.radians(G.MAG_ANGLE))
+    add_mag_bounds(os.path.join(XML, MAG_MODEL + ".ydr.xml"), ctr,
+                   (depth / 2000, G.MAG_HW / 1000, length / 2000))
+
     all_tex = list(tex.values())
     write_ytd_xml(os.path.join(XML, MODEL + ".ytd.xml"), all_tex)
-    mag_tex = [tex[n] for n in ("glock17_pal_d", "glock17_pal_s", "glock17_flat_n")]
-    os.makedirs(os.path.join(XML, MAG_MODEL), exist_ok=True)
-    for t in mag_tex:
-        shutil.copyfile(tpath[t["name"]], os.path.join(XML, MAG_MODEL,
-                                                       t["name"] + ".dds"))
-    write_ytd_xml(os.path.join(XML, MAG_MODEL + ".ytd.xml"), mag_tex)
+    # the magazine's own texture dictionary
+    mag_tex = make_textures(os.path.join(XML, MAG_MODEL),
+                            keys={"polymer", "brass", "copper"})
+    write_ytd_xml(os.path.join(XML, MAG_MODEL + ".ytd.xml"),
+                  list(mag_tex.values()))
 
     stream = os.path.join(OUT, "stream")
     shutil.rmtree(stream, ignore_errors=True)

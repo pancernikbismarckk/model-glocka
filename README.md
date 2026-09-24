@@ -118,7 +118,10 @@ na serwerze FiveM.
 - **Łuska i nabój**: mosiądz i tombak (pocisk pełnopłaszczowy), wymiary
   naboju 9×19 mm wg C.I.P.
 - **Wersja GTA V**: shader `normal_spec`, tekstury DXT5 z mipmapami, mapy
-  normalnych w konwencji DirectX, gładkie części kolorowane z palety 64 × 64.
+  normalnych w konwencji DirectX. Czarny kolor, a każdy materiał ma powtarzalną
+  teksturę (chropowaty polimer, ziarno nitrydowanego metalu); tekstury koloru
+  są nieskompresowane, żeby czerń nie dostała odcienia. Magazynek ma bryłę
+  kolizji, więc po wyjęciu spada na ziemię.
 
 ## Jak odtworzyć model
 
