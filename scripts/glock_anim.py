@@ -73,17 +73,16 @@ def ease_in(u):
     return u * u
 
 
-def slide_stroke(t, t0=T_SHOT, back=2.0, fwd=3.0, stop=0.0):
+def slide_stroke(t, t0=T_SHOT, back=2.0, fwd=3.0):
     """Slide travel (mm) for a recoil cycle starting at t0: rearward in
-    `back` frames (the spring decelerates it), forward in `fwd` frames
-    (accelerating) until it reaches `stop` (0 = in battery)."""
+    `back` frames (the spring decelerates it), then forward in `fwd` frames
+    (accelerating) into battery."""
     S = G.SLIDE_TRAVEL
     if t <= t0:
         return 0.0
     if t <= t0 + back:
         return S * ease_out((t - t0) / back)
-    u = (t - t0 - back) / fwd
-    return max(stop, S - (S - 0.0) * ease_in(u)) if u < 1.0 else stop
+    return S * (1.0 - ease_in((t - t0 - back) / fwd))
 
 
 def slide_return(t, t0, dur, s0):
@@ -93,7 +92,7 @@ def slide_return(t, t0, dur, s0):
     return s0 * (1.0 - ease_in((t - t0) / dur))
 
 
-def barrel_motion(s, closing):
+def barrel_motion(s):
     """Barrel travel (mm) and tilt (degrees) for slide travel s.  The barrel
     stays locked for the first 3 mm, then drops at the rear and stops."""
     b = min(s, G.BARREL_TRAVEL)
@@ -275,9 +274,9 @@ def add_flash(c):
     c.add("Gun_Flash", flash, 0.25)
 
 
-def add_barrel(c, s_of_t, t_close):
+def add_barrel(c, s_of_t):
     def barrel(t):
-        b, tilt = barrel_motion(s_of_t(t), t >= t_close)
+        b, tilt = barrel_motion(s_of_t(t))
         return {"loc": BACK * b / 1000.0, "rot": (AXIS_Y, -tilt)}
     c.add("Gun_Barrel", barrel, 0.25)
 
@@ -298,7 +297,7 @@ def fire_clip(rig, empty=False):
             return slide_stroke(t, T_SHOT, back, fwd)
 
     c.add("Gun_Cock1", lambda t: {"loc": BACK * s_of_t(t) / 1000.0}, 0.25)
-    add_barrel(c, s_of_t, t_back)
+    add_barrel(c, s_of_t)
     add_trigger_pull(c, 0.0, 9.0)
     add_flash(c)
 
@@ -385,7 +384,7 @@ def reload_clip(rig, empty=False):
 
         def barrel(t):
             s = s_of_t(t)
-            b, tilt = barrel_motion(s, True)
+            b, tilt = barrel_motion(s)
             return {"loc": BACK * b / 1000.0, "rot": (AXIS_Y, -tilt)}
         c.add("Gun_Barrel", barrel, 0.25)
 

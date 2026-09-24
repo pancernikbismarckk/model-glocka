@@ -67,6 +67,12 @@ def main():
                              f"{plural(st['tris'], 'trójkąt', 'trójkąty', 'trójkątów')}"),
           ("cu_port", "Okno wyrzutnika i wyciąg")], None),
     ]
+    anims = [("anim_fire_still", "Strzał – wyrzut łuski"),
+             ("anim_fire_empty_still", "Ostatni strzał – zamek w tyle"),
+             ("anim_reload_still", "Przeładowanie"),
+             ("anim_reload_empty_still", "Zwolnienie zamka")]
+    if all(os.path.exists(os.path.join(R, v + ".png")) for v, _ in anims):
+        rows.append((anims, None))
     label_h = 44
     layout = []
     y = title_h

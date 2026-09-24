@@ -32,10 +32,10 @@ TMP = os.path.join(OUT, "_frames")
 # name: (clip, (target mm, distance m, yaw, elevation, lens), slow-motion,
 #        frame of the still used on the contact sheet)
 PREVIEWS = {
-    "fire": ("fire", ((95.0, 60.0, -15.0), 1.05, 240.0, 26.0, 100), 4, 5.5),
+    "fire": ("fire", ((95.0, 70.0, -45.0), 1.25, 240.0, 24.0, 100), 4, 5.5),
     "fire_empty": ("fire_empty", ((75.0, 0.0, -45.0), 0.90, 150.0, 14.0, 100),
                    2, 3.5),
-    "reload": ("reload", ((140.0, 0.0, -92.0), 1.05, 22.0, -6.0, 100), 1, 30.0),
+    "reload": ("reload", ((112.0, 0.0, -88.0), 0.95, 22.0, -6.0, 100), 1, 30.0),
     "reload_empty": ("reload_empty", ((118.0, 0.0, -78.0), 1.05, 150.0, 8.0,
                                       100), 1, 50.0),
 }

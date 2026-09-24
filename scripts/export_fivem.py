@@ -13,7 +13,10 @@ CodeWalker XML written by Sollumz into binary GTA V resources.
   --keep-xml        keep the intermediate XML/DDS files (fivem/_xml)
 
 Output: fivem/glock17/ - a resource folder ready for the server's resources:
-  fxmanifest.lua, client.lua, meta/*.meta, stream/*.ydr, *.ytd, *.ycd
+  fxmanifest.lua, config.lua, client.lua, meta/*.meta,
+  stream/*.ydr, *.ytd, *.ycd, images/weapon_glock17.png (inventory icon),
+  optional/bez_oznaczen/*.ytd (textures without the GLOCK markings)
+The README.md of the resource is not generated.
 """
 import importlib
 import io
