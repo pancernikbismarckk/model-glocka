@@ -7,6 +7,8 @@ or with the bpy module:   python scripts/build_glock17.py [options]
 
 Options:
   --no-render       only build the model, save the .blend and export
+  --low             low-poly game model (about 5 000 triangles), written as
+                    glock17_gen4_lowpoly.* (implies --no-render)
   --quick           low resolution / low sample preview renders (no export)
   --views=a,b,...   render only the listed views (see VIEWS)
 
@@ -33,7 +35,7 @@ RENDER_DIR = os.path.join(ROOT, "renders")
 
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
 QUICK = "--quick" in ARGS
-NO_RENDER = "--no-render" in ARGS
+NO_RENDER = "--no-render" in ARGS or "--low" in ARGS
 
 
 def _arg(name, default):
@@ -44,6 +46,40 @@ def _arg(name, default):
 
 
 ONLY_VIEWS = _arg("--views", "")
+
+# Low-poly build (game model, see export_fivem.py): fewer segments on the
+# roundings and the grip; the detail lives in the textures and normal maps
+LOW = "--low" in ARGS
+OUT_NAME = "glock17_gen4_lowpoly" if LOW else "glock17_gen4"
+
+
+def low(high, low_value):
+    return low_value if LOW else high
+
+
+def simplify_loop(pts, tol=0.12):
+    """Douglas-Peucker on a closed polyline (low-poly build only)."""
+    if not LOW or len(pts) < 8:
+        return pts
+
+    def dp(seg):
+        if len(seg) < 3:
+            return seg
+        (x0, y0), (x1, y1) = seg[0], seg[-1]
+        dx, dy = x1 - x0, y1 - y0
+        L = math.hypot(dx, dy) or 1e-9
+        d = [abs((x - x0) * dy - (y - y0) * dx) / L for x, y in seg[1:-1]]
+        k = max(range(len(d)), key=d.__getitem__)
+        if d[k] <= tol:
+            return [seg[0], seg[-1]]
+        a = dp(seg[:k + 2])
+        return a[:-1] + dp(seg[k + 1:])
+
+    n = len(pts)
+    far = max(range(n), key=lambda i: math.dist(pts[0], pts[i]))
+    a = dp(pts[:far + 1])
+    b = dp(pts[far:] + [pts[0]])
+    return a[:-1] + b[:-1]
 
 
 # ==========================================================================
@@ -100,10 +136,11 @@ def prism(poly, axis, a0, a1, bm=None):
 
 def rrect(x0, x1, y0, y1, r=0.0, seg90=4):
     return G.rounded_poly([(x0, y0, r), (x1, y0, r), (x1, y1, r), (x0, y1, r)],
-                          seg90)
+                          low(seg90, max(1, seg90 // 2)))
 
 
 def circle(cx, cy, r, n=16):
+    n = low(n, max(8, n // 2))
     return [(cx + r * math.cos(2 * math.pi * k / n),
              cy + r * math.sin(2 * math.pi * k / n)) for k in range(n)]
 
@@ -114,7 +151,11 @@ def curve_solid(name, loops_xz, half_width, bevel, res=2, y_center=0.0):
     cu = bpy.data.curves.new(name, "CURVE")
     cu.dimensions = "2D"
     cu.fill_mode = "BOTH"
+    res = low(res, 0)
+    if LOW and half_width < 0.5:        # ribs: plain blocks
+        bevel = 0.0
     for loop in loops_xz:
+        loop = simplify_loop(loop)
         sp = cu.splines.new("POLY")
         sp.points.add(len(loop) - 1)
         for p, (x, z) in zip(sp.points, loop):
@@ -144,6 +185,7 @@ def curve_solid(name, loops_xz, half_width, bevel, res=2, y_center=0.0):
 def lathe(profile, seg=16, bm=None):
     """Solid of revolution around the X axis; profile = [(x, r), ...] that
     starts and ends on the axis (r = 0)."""
+    seg = low(seg, 8)
     bm = bm or bmesh.new()
     rings = []
     for x, r in profile:
@@ -176,7 +218,7 @@ def tube_along(name, path, radius, res=2):
     for p, co in zip(sp.points, path):
         p.co = (*co, 1.0)
     cu.bevel_depth = radius
-    cu.bevel_resolution = res
+    cu.bevel_resolution = low(res, 0)
     cu.use_fill_caps = True
     tmp = link(bpy.data.objects.new(name + "_tmp", cu))
     dg = bpy.context.evaluated_depsgraph_get()
@@ -241,6 +283,10 @@ def bevel_mod(ob, width, segments=2, angle=35.0, limit="ANGLE"):
     m.profile = 0.5
     m.miter_outer = "MITER_ARC"
     m.harden_normals = False
+    if LOW:                         # one segment; no micro bevels
+        m.segments = 1
+        if width < 0.3:
+            m.show_viewport = m.show_render = False
     return m
 
 
@@ -610,7 +656,7 @@ def build_cover_plate(M):
 # Barrel and recoil spring guide
 # ==========================================================================
 def build_barrel(M):
-    seg = 36
+    seg = low(36, 12)
     cz, R = G.BORE_Z, G.BARREL_R
 
     def ring(x, r, hexa=False):
@@ -691,13 +737,14 @@ def build_recoil_guide(M):
 # Frame
 # ==========================================================================
 def build_grip(M):
-    levels = G.grip_levels()
+    levels = G.grip_levels_low(0.8) if LOW else G.grip_levels()
+    ring_res = dict(n_front=3, n_back=2, n_bflat=1, n_side=2) if LOW else {}
     bm = bmesh.new()
     uv = bm.loops.layers.uv.new("UVMap")
     S = G.GRIP_TEX_SIZE * G.GRIP_TEX_MM_PER_PX
     rings, arcs, zs = [], [], []
     for z, inset in levels:
-        pts, arcl, _ = G.grip_ring(z, inset)
+        pts, arcl, _ = G.grip_ring(z, inset, **ring_res)
         rings.append([bm.verts.new((x, y, z)) for x, y in pts])
         arcs.append(arcl)
         zs.append(z)
@@ -759,10 +806,11 @@ def build_frame(M):
     # ---- trigger guard (with the Gen4 front serrations)
     tg = curve_solid("TriggerGuard", [G.TG_OUTER, G.TG_HOLE], G.TG_HW, 2.3, 3)
     cut = bmesh.new()
-    for k in range(8):
+    for k in range(low(8, 0)):          # front serrations (not in low-poly)
         zc = -46.4 - k * 1.45
         prism(rrect(69.0, 71.45, zc - 0.36, zc + 0.36, 0.0), "Y", -5.2, 5.2, cut)
-    boolean(tg, cut)
+    if cut.faces:
+        boolean(tg, cut)
     boolean(tg, magwell_cutter(*G.MAG_WELL_TOP))
     parts.append(tg)
 
@@ -800,7 +848,7 @@ def build_frame(M):
         ys = G.grip_surface_y(x, z) if on_grip else G.FRAME_BODY_HW
         for s in (-1, 1):
             bm = bmesh.new()
-            seg = 16
+            seg = low(16, 6)
             defs = [(ys - 1.5, r), (ys + 0.02, r), (ys + 0.12, r - 0.18)]
             rings = [[bm.verts.new((x + rr * math.cos(2 * math.pi * k / seg),
                                     s * yy,
@@ -948,7 +996,8 @@ def build_casing(M):
 
 def build_cartridge(M, name="MagazineRound"):
     """Loaded 9x19 round (FMJ), on top of the magazine."""
-    ob = obj_from_bm(name, lathe(G.CARTRIDGE_PROFILE, 16))
+    prof = G.CARTRIDGE_PROFILE_LOW if LOW else G.CARTRIDGE_PROFILE
+    ob = obj_from_bm(name, lathe(prof, 16))
     ob["flat_axis"] = "X"
     set_material(ob, M["brass"])
     ob.data.materials.append(M["copper"])
@@ -1252,7 +1301,7 @@ def export_model(rig, objs):
     """Save the .blend and export glTF binary + FBX: skinned parts, the
     skeleton and the animation clips."""
     bpy.ops.file.pack_all()
-    blend = os.path.join(ROOT, "glock17_gen4.blend")
+    blend = os.path.join(ROOT, OUT_NAME + ".blend")
     bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
     vl = bpy.context.view_layer
     for o in bpy.context.scene.objects:
@@ -1261,7 +1310,7 @@ def export_model(rig, objs):
         o.select_set(True)
     vl.objects.active = rig
     bpy.ops.export_scene.gltf(
-        filepath=os.path.join(ROOT, "glock17_gen4.glb"),
+        filepath=os.path.join(ROOT, OUT_NAME + ".glb"),
         export_format="GLB", use_selection=True, export_apply=True,
         export_yup=True, export_image_format="AUTO", export_skins=True,
         export_animations=True, export_animation_mode="ACTIONS",
@@ -1273,7 +1322,7 @@ def export_model(rig, objs):
         m.quad_method = "BEAUTY"
         o.modifiers.move(len(o.modifiers) - 1, 0)
     bpy.ops.export_scene.fbx(
-        filepath=os.path.join(ROOT, "glock17_gen4.fbx"),
+        filepath=os.path.join(ROOT, OUT_NAME + ".fbx"),
         use_selection=True, object_types={"ARMATURE", "MESH"},
         use_mesh_modifiers=True, apply_unit_scale=True,
         apply_scale_options="FBX_SCALE_UNITS", axis_forward="-Z", axis_up="Y",
@@ -1317,7 +1366,8 @@ if __name__ == "__main__":
     f, t = poly_stats(objs)
     print(f"faces={f} tris={t}")
     os.makedirs(RENDER_DIR, exist_ok=True)
-    with open(os.path.join(RENDER_DIR, "stats.json"), "w") as fh:
+    stats = "stats_lowpoly.json" if LOW else "stats.json"
+    with open(os.path.join(RENDER_DIR, stats), "w") as fh:
         json.dump({"faces": f, "tris": t, "size_mm": [round(v, 2) for v in size],
                    "objects": {o.name: {"faces": len(o.data.polygons),
                                         "tris": sum(len(p.vertices) - 2

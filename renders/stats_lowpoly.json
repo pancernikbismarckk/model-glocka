@@ -1,0 +1,59 @@
+{
+  "faces": 2526,
+  "tris": 5386,
+  "size_mm": [
+    201.27,
+    30.32,
+    138.04
+  ],
+  "objects": {
+    "Slide": {
+      "faces": 358,
+      "tris": 1070
+    },
+    "Barrel": {
+      "faces": 112,
+      "tris": 250
+    },
+    "RecoilSpringGuide": {
+      "faces": 81,
+      "tris": 158
+    },
+    "Frame": {
+      "faces": 1181,
+      "tris": 2514
+    },
+    "Trigger": {
+      "faces": 111,
+      "tris": 180
+    },
+    "TriggerSafety": {
+      "faces": 66,
+      "tris": 108
+    },
+    "SlideStop": {
+      "faces": 112,
+      "tris": 172
+    },
+    "MagazineCatch": {
+      "faces": 165,
+      "tris": 252
+    },
+    "Magazine": {
+      "faces": 128,
+      "tris": 264
+    },
+    "MagazineRound": {
+      "faces": 96,
+      "tris": 176
+    },
+    "Casing": {
+      "faces": 112,
+      "tris": 208
+    },
+    "MuzzleFlash": {
+      "faces": 4,
+      "tris": 34
+    }
+  }
+}

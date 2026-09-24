@@ -1,7 +1,9 @@
-# Glock 17 Gen4 – broń add-on do FiveM (standalone)
+# Glock 17 Gen4 – broń add-on do FiveM (standalone), wersja niskopoligonowa
 
-Obok jest też lżejsza wersja do gry: [`../glock17_lowpoly`](../glock17_lowpoly)
-(ok. 5 tys. trójkątów zamiast 19 tys.). Uruchom tylko jedną z nich.
+Ten sam pistolet co w `fivem/glock17`, z lżejszym modelem do gry:
+**4 704 trójkąty** broni + 440 magazynka (pełna wersja: ok. 19 tys.).
+Detale (tekstura chwytu, grawery, faktura) są w teksturach. Uruchom **tylko
+jedną** z wersji, bo obie dodają tę samą broń `WEAPON_GLOCK17`.
 
 Zasób dodaje broń **`WEAPON_GLOCK17`**: model, tekstury, magazynek, animacje
 i pliki meta. Nie wymaga żadnego frameworka (ESX, QBCore, ox itp.).
@@ -10,10 +12,10 @@ i pliki meta. Nie wymaga żadnego frameworka (ESX, QBCore, ox itp.).
 
 ## Instalacja
 
-1. Skopiuj folder `glock17` do katalogu `resources` serwera.
+1. Skopiuj folder `glock17_lowpoly` do katalogu `resources` serwera.
 2. Dopisz do `server.cfg`:
    ```
-   ensure glock17
+   ensure glock17_lowpoly
    ```
 3. Przekaż broń graczowi ze skryptu po stronie serwera albo z konsoli txAdmin:
    ```lua

@@ -39,6 +39,8 @@ na karcie wymiarów. Wartość 32 mm ze specyfikacji to szerokość całkowita.
 | `glock17_gen4.blend` | scena z modelem, szkieletem, animacjami, materiałami, spakowanymi teksturami, kamerą i oświetleniem (F12 renderuje podgląd) |
 | `glock17_gen4.glb` | glTF 2.0: model, szkielet, 4 animacje, tekstury (Unity, Unreal, Godot, three.js, przeglądarki) |
 | `glock17_gen4.fbx` | FBX: model, szkielet, 4 animacje, osadzone tekstury; siatka striangulowana, zapisane styczne |
+| `glock17_gen4_lowpoly.blend/.glb/.fbx` | wersja niskopoligonowa (5 386 trójkątów z łuską i płomieniem), te same kości i animacje |
+| `fivem/glock17_lowpoly/` | zasób FiveM z wersją niskopoligonową: 4 704 trójkąty broni + 440 magazynka |
 | `fivem/glock17/` | zasób FiveM: broń `WEAPON_GLOCK17` w formatach GTA V (`.ydr`, `.ytd`, `.ycd`) i pliki meta. Instrukcja: [`fivem/glock17/README.md`](fivem/glock17/README.md) |
 | `preview.png` | główny obraz podglądowy (1920 × 1200) |
 | `renders/` | widoki, zbliżenia detali, render siatki, arkusz zbiorczy, animacje (`anim_*.gif`, `anim_*.mp4`) |
@@ -134,6 +136,10 @@ python scripts/build_glock17.py            # model, szkielet, animacje, .blend/.
 python scripts/render_anims.py             # animacje -> renders/anim_*.gif, anim_*.mp4
 python scripts/make_sheet.py               # preview.png i renders/preview_sheet.png
 ```
+
+Wersja niskopoligonowa: `python scripts/build_glock17.py --low` oraz
+`python scripts/export_fivem.py --low ...` (mniej segmentów na zaokrągleniach,
+rzadszy chwyt, uproszczone obrysy; detale zostają w teksturach).
 
 Opcje `build_glock17.py`: `--no-render` (tylko model i eksport), `--quick`
 (szybkie podglądy w niskiej rozdzielczości), `--views=hero,left,...`.

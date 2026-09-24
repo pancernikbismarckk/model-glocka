@@ -11,6 +11,8 @@ CodeWalker XML written by Sollumz into binary GTA V resources.
                     (default: the add-on installed in Blender)
   --cwxml2bin=EXE   converter (default: tools/cwxml2bin/bin/Release/net8.0/)
   --keep-xml        keep the intermediate XML/DDS files (fivem/_xml)
+  --low             low-poly model (about 5 000 triangles) into
+                    fivem/glock17_lowpoly instead of fivem/glock17
 
 Output: fivem/glock17/ - a resource folder ready for the server's resources:
   fxmanifest.lua, config.lua, client.lua, meta/*.meta,
@@ -39,7 +41,8 @@ import glock_anim as A  # noqa: E402
 import glock_data as G  # noqa: E402
 
 ROOT = B.ROOT
-OUT = os.path.join(ROOT, "fivem", "glock17")
+# --low: low-poly game model (about 5 000 triangles) as a second resource
+OUT = os.path.join(ROOT, "fivem", "glock17_lowpoly" if B.LOW else "glock17")
 XML = os.path.join(ROOT, "fivem", "_xml")
 
 WEAPON = "WEAPON_GLOCK17"

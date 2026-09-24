@@ -320,6 +320,38 @@ def grip_levels():
     return zs
 
 
+def grip_levels_low(tol=0.3):
+    """Fewer levels for the low-poly model: drops every level the grip
+    profile (front, back, width) passes within `tol` mm of by straight
+    interpolation between the kept neighbours (the edge rounding stays)."""
+    zs = grip_levels()
+
+    def prof(z):
+        return (grip_front_x(z), grip_back_x(z), grip_width(z))
+
+    keep = [0, 1]
+    i = 1
+    while i < len(zs) - 1:
+        j = i + 1
+        while j < len(zs) - 1:
+            za, zb = zs[i][0], zs[j + 1][0]
+            pa, pb = prof(za), prof(zb)
+            ok = True
+            for k in range(i + 1, j + 2):
+                z = zs[k][0]
+                t = (z - za) / (zb - za)
+                if max(abs(a + (b - a) * t - c)
+                       for a, b, c in zip(pa, pb, prof(z))) > tol:
+                    ok = False
+                    break
+            if not ok or zs[j + 1][1] != 0.0:
+                break
+            j += 1
+        keep.append(j)
+        i = j
+    return [zs[k] for k in sorted(set(keep + [len(zs) - 2, len(zs) - 1]))]
+
+
 def _tangent_normal(a, b):
     ax, ay, ra = a
     bx, by, rb = b
@@ -516,6 +548,12 @@ def _bullet_nose(x0, x1, r, n=7):
 CARTRIDGE_PROFILE = _CASE_HEAD + [
     (CASE_LEN, 4.825), (CASE_LEN, 4.505), (22.0, 4.505),
 ] + _bullet_nose(22.0, CARTRIDGE_LEN, 4.505)
+
+# the same without primer and groove detail (low-poly game model)
+CARTRIDGE_PROFILE_LOW = [
+    (0.0, 0.0), (0.0, 4.98), (1.05, 4.98), (1.35, 4.02), (1.95, 4.02),
+    (2.55, 4.965), (CASE_LEN, 4.825), (CASE_LEN, 4.505), (22.0, 4.505),
+] + _bullet_nose(22.0, CARTRIDGE_LEN, 4.505, 3)
 
 # top round in the magazine: head X and axis Z (horizontal, points forward)
 MAG_ROUND_HEAD_X = 144.6
