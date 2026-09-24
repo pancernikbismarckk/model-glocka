@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- XML -> binary converter for GTA V resources (ydr/ytd/ycd/ybn/...) using
+       CodeWalker.Core.  Set CodeWalkerDir to a checkout of
+       https://github.com/dexyfex/CodeWalker (default: ../../../dexyfex/codewalker). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <CodeWalkerDir Condition="'$(CodeWalkerDir)' == ''">$(MSBuildThisFileDirectory)../../../dexyfex/codewalker</CodeWalkerDir>
+    <NoWarn>$(NoWarn);CS0618;NU1701</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(CodeWalkerDir)/CodeWalker.Core/CodeWalker.Core.csproj" />
+  </ItemGroup>
+</Project>

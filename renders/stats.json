@@ -1,6 +1,6 @@
 {
-  "faces": 9547,
-  "tris": 19068,
+  "faces": 10085,
+  "tris": 20456,
   "size_mm": [
     201.39,
     30.41,
@@ -8,24 +8,28 @@
   ],
   "objects": {
     "Slide": {
-      "faces": 1402,
-      "tris": 3334
+      "faces": 1464,
+      "tris": 3514
     },
     "Barrel": {
-      "faces": 304,
-      "tris": 648
+      "faces": 334,
+      "tris": 746
     },
     "RecoilSpringGuide": {
       "faces": 81,
       "tris": 158
     },
     "Frame": {
-      "faces": 5258,
-      "tris": 10536
+      "faces": 5176,
+      "tris": 10564
     },
     "Trigger": {
-      "faces": 379,
-      "tris": 672
+      "faces": 257,
+      "tris": 460
+    },
+    "TriggerSafety": {
+      "faces": 122,
+      "tris": 212
     },
     "SlideStop": {
       "faces": 720,
@@ -36,8 +40,20 @@
       "tris": 1788
     },
     "Magazine": {
-      "faces": 379,
-      "tris": 672
+      "faces": 359,
+      "tris": 696
+    },
+    "MagazineRound": {
+      "faces": 320,
+      "tris": 608
+    },
+    "Casing": {
+      "faces": 224,
+      "tris": 416
+    },
+    "MuzzleFlash": {
+      "faces": 4,
+      "tris": 34
     }
   }
 }

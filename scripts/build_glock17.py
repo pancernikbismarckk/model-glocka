@@ -21,7 +21,7 @@ import sys
 
 import bpy  # must come first: the bpy module provides bmesh and mathutils
 import bmesh
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -141,6 +141,32 @@ def curve_solid(name, loops_xz, half_width, bevel, res=2, y_center=0.0):
     return ob
 
 
+def lathe(profile, seg=16, bm=None):
+    """Solid of revolution around the X axis; profile = [(x, r), ...] that
+    starts and ends on the axis (r = 0)."""
+    bm = bm or bmesh.new()
+    rings = []
+    for x, r in profile:
+        if r <= 1e-6:
+            rings.append([bm.verts.new((x, 0.0, 0.0))])
+            continue
+        rings.append([bm.verts.new((x, r * math.cos(2 * math.pi * k / seg),
+                                    r * math.sin(2 * math.pi * k / seg)))
+                      for k in range(seg)])
+    faces = []
+    for a, b in zip(rings[:-1], rings[1:]):
+        for k in range(seg):
+            k1 = (k + 1) % seg
+            if len(a) == 1:
+                faces.append(bm.faces.new((a[0], b[k1], b[k])))
+            elif len(b) == 1:
+                faces.append(bm.faces.new((a[k], a[k1], b[0])))
+            else:
+                faces.append(bm.faces.new((a[k], a[k1], b[k1], b[k])))
+    bmesh.ops.recalc_face_normals(bm, faces=faces)
+    return bm
+
+
 def tube_along(name, path, radius, res=2):
     """Round tube following a 3D polyline (curve with circular bevel)."""
     cu = bpy.data.curves.new(name, "CURVE")
@@ -165,14 +191,45 @@ def tube_along(name, path, radius, res=2):
     return obj_from_bm(name, bm)
 
 
-def boolean(target, cutter_bm, op="DIFFERENCE"):
+def boolean(target, cutter_bm, op="DIFFERENCE", self_overlap=False):
     cutter = obj_from_bm(target.name + "_cutter", cutter_bm)
     m = target.modifiers.new("bool", "BOOLEAN")
     m.operation = op
     m.object = cutter
     m.solver = "EXACT"
+    m.use_self = self_overlap
     apply_modifiers(target)
     bpy.data.objects.remove(cutter)
+
+
+def mag_loft(levels, uv=None):
+    """Slanted prism with the magazine section; levels = [(z, grow), ...]
+    from the bottom up (grow = clearance / flare in mm)."""
+    bm = bmesh.new()
+    rings = [[bm.verts.new((x, y, z)) for x, y in G.mag_section(z, grow)]
+             for z, grow in levels]
+    n = len(rings[0])
+    faces = [bm.faces.new((a[k], a[(k + 1) % n], b[(k + 1) % n], b[k]))
+             for a, b in zip(rings[:-1], rings[1:]) for k in range(n)]
+    faces += [bm.faces.new(rings[0][::-1]), bm.faces.new(rings[-1])]
+    bmesh.ops.recalc_face_normals(bm, faces=faces)
+    if uv is not None:                      # UVs handed to the new faces
+        lay = bm.loops.layers.uv.new("UVMap")
+        for f in bm.faces:
+            for loop in f.loops:
+                loop[lay].uv = uv
+    return bm
+
+
+def magwell_cutter(z0, z1, flare=0.0, flare_z=None, uv=None):
+    """Magazine well (magazine section + clearance) from z0 up to z1; with
+    flare, the mouth below flare_z is widened by `flare` mm."""
+    c = G.MAG_WELL_CLEAR
+    levels = [(z0, c), (z1, c)]
+    if flare:
+        levels = [(z0, c + flare), (flare_z, c + flare), (flare_z + 2.8, c),
+                  (z1, c)]
+    return mag_loft(levels, uv)
 
 
 def bevel_mod(ob, width, segments=2, angle=35.0, limit="ANGLE"):
@@ -358,6 +415,14 @@ def make_materials():
     M["white"] = principled("Sight_White", (0.82, 0.82, 0.8), 0.0, 0.5)
     M["plate"] = principled("Serial_Plate", (0.55, 0.55, 0.55), 1.0, 0.35)
     M["bore"] = principled("Bore_Dark", (0.01, 0.01, 0.01), 1.0, 0.6)
+    M["brass"] = principled("Brass_Case", (0.80, 0.55, 0.20), 1.0, 0.27)
+    M["copper"] = principled("Copper_Jacket", (0.84, 0.40, 0.24), 1.0, 0.3)
+    fl = principled("Muzzle_Flash", (1.0, 0.5, 0.12), 0.0, 1.0)
+    bsdf = fl.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Emission Color"].default_value = (1.0, 0.45, 0.1, 1.0)
+    bsdf.inputs["Emission Strength"].default_value = 6.0
+    fl.use_backface_culling = False
+    M["flash"] = fl
 
     p = tex_path("slide_markings_normal.png")
     if p:
@@ -422,6 +487,10 @@ def build_slide(M):
     prism(port, "Y", -6.0, hw + 2.0, cut)
     prism(circle(0.0, G.BORE_Z, 7.05, 36), "X", -2.0, 16.0, cut)
     boolean(slide, cut)
+    # hollow under the port: with the slide open you look into the chamber
+    # and onto the magazine instead of onto a solid pocket floor
+    x0, x1, hy, z0, z1 = G.SLIDE_CAVITY
+    boolean(slide, prism(rrect(x0, x1, -hy, hy, 0.8), "Z", z0, z1))
 
     bevel_mod(slide, 0.18, segments=1, angle=50.0)
     apply_modifiers(slide)
@@ -436,7 +505,8 @@ def build_slide(M):
     Sv = G.SLIDE_TEX_H * G.SLIDE_TEX_MM_PER_PX
     for poly in me.polygons:
         c = poly.center
-        if poly.normal.y < -0.985 and c.x < 140.0 and c.z < -1.0:
+        if poly.normal.y < -0.985 and c.x < 140.0 and c.z < -1.0 \
+                and c.y < -(hw - 0.5):
             poly.material_index = 1
         for li in poly.loop_indices:
             co = me.vertices[me.loops[li].vertex_index].co
@@ -572,9 +642,17 @@ def build_barrel(M):
             p.material_index = 1
 
     hood = curve_solid("BarrelHood", [G.rounded_poly([
-        (82.4, -0.3, 0.6), (114.9, -0.3, 0.5), (114.9, -17.0, 0.0),
+        (82.4, -0.3, 0.6), (G.CHAMBER_X, -0.3, 0.5), (G.CHAMBER_X, -17.0, 0.0),
         (80.6, -17.0, 0.0), (80.6, -7.0, 2.0)], 4)], 8.3, 0.55, 2)
+    # chamber, seen when the slide is open
+    boolean(hood, prism(circle(0.0, cz, G.CHAMBER_R, 24), "X",
+                        G.CHAMBER_X - 21.0, G.CHAMBER_X + 1.0))
     set_material(hood, M["barrel"])
+    hood.data.materials.append(M["bore"])
+    for p in hood.data.polygons:
+        if p.center.x < G.CHAMBER_X - 0.05 and \
+                math.hypot(p.center.y, p.center.z - cz) < G.CHAMBER_R + 0.1:
+            p.material_index = 1
     for p in (tube, hood):
         ensure_uv(p)
         finish_shading(p, 32.0)
@@ -584,7 +662,8 @@ def build_barrel(M):
 def build_recoil_guide(M):
     bm = bmesh.new()
     cz, seg = -25.2, 20
-    defs = [(12.0, 2.35), (1.15, 2.35), (0.9, 2.1), (0.9, 1.0), (1.05, 0.0)]
+    # the rod shows in the dust cover notch when the slide is open
+    defs = [(24.0, 2.35), (1.15, 2.35), (0.9, 2.1), (0.9, 1.0), (1.05, 0.0)]
     rings = []
     for x, r in defs:
         if r == 0.0:
@@ -674,6 +753,7 @@ def build_frame(M):
     for s in (-1, 1):
         prism(pocket, "Y", s * (hwb - 1.3), s * (hwb + 2.0), cut)
     boolean(body, cut)
+    boolean(body, magwell_cutter(*G.MAG_WELL_TOP))
     parts.append(body)
 
     # ---- trigger guard (with the Gen4 front serrations)
@@ -683,9 +763,16 @@ def build_frame(M):
         zc = -46.4 - k * 1.45
         prism(rrect(69.0, 71.45, zc - 0.36, zc + 0.36, 0.0), "Y", -5.2, 5.2, cut)
     boolean(tg, cut)
+    boolean(tg, magwell_cutter(*G.MAG_WELL_TOP))
     parts.append(tg)
 
+    # grip with the magazine well mouth (bottom) and the top of the well
     grip = build_grip(M)
+    plain = (0.93, 0.93)                    # flat spot of the grip texture
+    z0, z1 = G.MAG_WELL_BOTTOM
+    boolean(grip, magwell_cutter(z0, z1, G.MAG_WELL_FLARE, G.GRIP_Z_BOTTOM,
+                                 uv=plain))
+    boolean(grip, magwell_cutter(*G.MAG_WELL_TOP, uv=plain))
     for p in parts:
         set_material(p, M["polymer"])
         ensure_uv(p)
@@ -777,7 +864,8 @@ def build_trigger(M):
         set_material(p, M["polymer"])
         ensure_uv(p)
         finish_shading(p, 40.0)
-    return join([trig, blade], "Trigger")
+    trig.name = trig.data.name = "Trigger"
+    return trig, blade
 
 
 def build_slide_stop(M):
@@ -829,17 +917,74 @@ def build_mag_catch(M):
 def build_magazine(M):
     plate = curve_solid("MagPlate", [G.rounded_poly(G.MAG_PLATE, 5)],
                         G.MAG_PLATE_HW, 1.1, 2)
-    t = math.tan(math.radians(21.0))
-    zb, zt = -126.4, -72.0
-    body = curve_solid("MagBody", [G.rounded_poly([
-        (152.0, zb, 1.0), (185.8, zb, 1.0),
-        (185.8 - (zt - zb) * t, zt, 1.0), (152.0 - (zt - zb) * t, zt, 1.0)], 3)],
-        11.2, 0.9, 1)
+    body = obj_from_bm("MagBody", mag_loft([(G.MAG_ZB, 0.0), (G.MAG_ZT, 0.0)]))
+    body["flat_axis"] = "Z"
+    bevel_mod(body, 0.8, 2, 40.0)
+    apply_modifiers(body)
     for p in (plate, body):
         set_material(p, M["polymer"])
         ensure_uv(p)
         finish_shading(p, 38.0)
     return join([plate, body], "Magazine")
+
+
+def cartridge_to_build(ob, head_x, axis_z):
+    """Place a part modelled along +X (head at 0) with its head at head_x on
+    a horizontal axis at axis_z, pointing at the muzzle (-X)."""
+    ob.data.transform(Matrix.Translation((head_x, 0.0, axis_z))
+                      @ Matrix.Rotation(math.pi, 4, "Z"))
+
+
+def build_casing(M):
+    """Empty 9x19 case, in the chamber (it is ejected by the fire clip)."""
+    ob = obj_from_bm("Casing", lathe(G.CASE_PROFILE, 16))
+    ob["flat_axis"] = "X"
+    set_material(ob, M["brass"])
+    ensure_uv(ob)
+    finish_shading(ob, 35.0)
+    cartridge_to_build(ob, G.CHAMBER_X, G.BORE_Z)
+    return ob
+
+
+def build_cartridge(M, name="MagazineRound"):
+    """Loaded 9x19 round (FMJ), on top of the magazine."""
+    ob = obj_from_bm(name, lathe(G.CARTRIDGE_PROFILE, 16))
+    ob["flat_axis"] = "X"
+    set_material(ob, M["brass"])
+    ob.data.materials.append(M["copper"])
+    for p in ob.data.polygons:
+        if p.center.x > G.CASE_LEN + 0.01:
+            p.material_index = 1
+    ensure_uv(ob)
+    finish_shading(ob, 35.0)
+    cartridge_to_build(ob, G.MAG_ROUND_HEAD_X, G.MAG_ROUND_Z)
+    return ob
+
+
+def build_muzzle_flash(M):
+    """Three crossed flame cards and a star of petals.  Modelled collapsed
+    inside the bore (FLASH_REST_SCALE); the fire clip scales it up."""
+    bm = bmesh.new()
+    card = [(0.0, 0.0), (5.0, 3.4), (10.0, 2.3), (17.0, 4.8), (25.0, 2.0),
+            (34.0, 0.0), (25.0, -2.0), (17.0, -4.8), (10.0, -2.3), (5.0, -3.4)]
+    for k in range(3):
+        a = math.pi * k / 3
+        bm.faces.new([bm.verts.new((x, r * math.cos(a), r * math.sin(a)))
+                      for x, r in card])
+    star = []
+    for k in range(12):
+        a = 2 * math.pi * k / 12 + math.pi / 12
+        r = 11.0 if k % 2 == 0 else 3.2
+        star.append(bm.verts.new((3.0, r * math.cos(a), r * math.sin(a))))
+    bm.faces.new(star)
+    s = G.FLASH_REST_SCALE
+    ob = obj_from_bm("MuzzleFlash", bm)
+    set_material(ob, M["flash"])
+    ensure_uv(ob)
+    x0 = G.BONE_POINT_MM["Gun_Flash"][0]
+    ob.data.transform(Matrix.Translation((x0, 0.0, G.BORE_Z))
+                      @ Matrix.Rotation(math.pi, 4, "Z") @ Matrix.Scale(s, 4))
+    return ob
 
 
 # ==========================================================================
@@ -854,20 +999,75 @@ def poly_stats(objs):
     return faces, tris
 
 
+# build mm -> scene metres in the GTA V weapon orientation (X = muzzle,
+# Z = up, origin of the standard pistol skeleton, see glock_data)
+XF = (Matrix.Scale(0.001, 4) @ Matrix.Rotation(math.pi, 4, "Z")
+      @ Matrix.Translation(-Vector(G.GTA_ORIGIN_MM)))
+XF_ROT = Matrix.Rotation(math.pi, 3, "Z")
+
+
+def bone_rest_matrices():
+    """Scene-space rest matrices of the skeleton bones (G.GTA_BONES)."""
+    W = {}
+    for name, parent, kind, (t, q) in G.GTA_BONES:
+        rot = Quaternion((q[3], q[0], q[1], q[2])).normalized().to_matrix()
+        if kind == "local":
+            base = W[parent] if parent else Matrix.Identity(4)
+            W[name] = base @ Matrix.Translation(t) @ rot.to_4x4()
+        else:
+            W[name] = Matrix.Translation(XF @ Vector(t)) @ rot.to_4x4()
+    return W
+
+
+def build_rig(objs):
+    """Armature with the GTA V pistol skeleton; every part is skinned
+    rigidly to one bone (G.PART_BONES)."""
+    arm = bpy.data.armatures.new("Glock17_Gen4")
+    arm.display_type = "STICK"
+    rig = link(bpy.data.objects.new("Glock17_Gen4", arm))
+    rig.show_in_front = True
+    W = bone_rest_matrices()
+    vl = bpy.context.view_layer
+    vl.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    ebs = {}
+    for name, parent, _, _ in G.GTA_BONES:
+        eb = arm.edit_bones.new(name)
+        eb.head, eb.tail = (0.0, 0.0, 0.0), (0.0, 0.012, 0.0)
+        eb.matrix = W[name]
+        if parent:
+            eb.parent = ebs[parent]
+        ebs[name] = eb
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for pb in rig.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+    for ob in objs:
+        vg = ob.vertex_groups.new(name=G.PART_BONES[ob.name])
+        vg.add(list(range(len(ob.data.vertices))), 1.0, "REPLACE")
+        m = ob.modifiers.new("Armature", "ARMATURE")
+        m.object = rig
+        ob.parent = rig
+    return rig
+
+
 def build_model():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     M = make_materials()
+    trigger, safety = build_trigger(M)
     objs = [
         build_slide(M),
         build_barrel(M),
         build_recoil_guide(M),
         build_frame(M),
-        build_trigger(M),
+        trigger,
+        safety,
         build_slide_stop(M),
         build_mag_catch(M),
         build_magazine(M),
+        build_cartridge(M),
+        build_casing(M),
+        build_muzzle_flash(M),
     ]
-    # mm -> m, centre the pistol on the world origin
     mins = Vector((1e9, 1e9, 1e9))
     maxs = Vector((-1e9, -1e9, -1e9))
     for o in objs:
@@ -875,17 +1075,11 @@ def build_model():
             for i in range(3):
                 mins[i] = min(mins[i], v.co[i])
                 maxs[i] = max(maxs[i], v.co[i])
-    centre = (mins + maxs) / 2
-    CENTRE_MM[:] = centre
-    xf = Matrix.Scale(0.001, 4) @ Matrix.Translation(-centre)
-    root = bpy.data.objects.new("Glock17_Gen4", None)
-    link(root)
-    root.empty_display_size = 0.05
     for o in objs:
-        o.data.transform(xf)
-        o.parent = root
+        o.data.transform(XF)
+    rig = build_rig(objs)
     print("bbox mm:", tuple(round(v, 2) for v in (maxs - mins)))
-    return root, objs, (maxs - mins)
+    return rig, objs, (maxs - mins)
 
 
 def look_at(ob, target):
@@ -953,7 +1147,8 @@ def setup_scene():
 
     global LIGHT_RIG
     LIGHT_RIG = link(bpy.data.objects.new("LightRig", None))
-    # rig defined for a camera on the -Y side; rotated with every view
+    # rig defined for a camera on the pistol's left side (build -Y); it is
+    # turned with every view (aim_light_rig)
     add_area("Key", (-0.10, -0.30, 0.70), 1.1, 22.0, size_y=0.55,
              parent=LIGHT_RIG)
     add_area("FrontCard", (0.0, -1.9, -0.05), 2.6, 11.0, size_y=1.4,
@@ -993,19 +1188,23 @@ def add_camera(name, loc, target=(0, 0, 0), lens=100.0, ortho=None):
 
 
 def sph(dist, yaw, elev):
-    """Offset for a camera: yaw 0 = looking at the LEFT side (-Y),
+    """Scene offset for a camera: yaw 0 = looking at the pistol's LEFT side,
     +yaw swings towards the muzzle, elev = degrees above the horizon."""
     y, e = math.radians(yaw), math.radians(elev)
-    return Vector((-dist * math.cos(e) * math.sin(y),
-                   -dist * math.cos(e) * math.cos(y), dist * math.sin(e)))
-
-
-CENTRE_MM = Vector((0.0, 0.0, 0.0))     # set by build_model()
+    return XF_ROT @ Vector((-dist * math.cos(e) * math.sin(y),
+                            -dist * math.cos(e) * math.cos(y),
+                            dist * math.sin(e)))
 
 
 def mm(x, y, z):
     """Build-space millimetres -> scene metres."""
-    return (Vector((x, y, z)) - CENTRE_MM) * 0.001
+    return XF @ Vector((x, y, z))
+
+
+def aim_light_rig(target, yaw):
+    """The light rig is defined for yaw 0; turn it with the camera."""
+    LIGHT_RIG.rotation_euler = (0.0, 0.0, math.radians(-yaw) + math.pi)
+    LIGHT_RIG.location = target
 
 
 # name: (target in build mm, distance m, yaw, elevation, lens mm, ortho scale)
@@ -1040,8 +1239,7 @@ def render_views(names, res=(1920, 1200), samples=192, suffix=""):
         tgt = mm(*tgt_mm)
         cam = add_camera("Cam_" + name, tgt + sph(dist, yaw, elev), tgt, lens,
                          ortho)
-        LIGHT_RIG.rotation_euler = (0.0, 0.0, math.radians(-yaw))
-        LIGHT_RIG.location = tgt
+        aim_light_rig(tgt, yaw)
         sc.camera = cam
         path = os.path.join(RENDER_DIR, f"{name}{suffix}.png")
         sc.render.filepath = path
@@ -1050,37 +1248,43 @@ def render_views(names, res=(1920, 1200), samples=192, suffix=""):
     return out
 
 
-def export_model(root, objs):
-    """Save the .blend and export glTF binary + FBX (model only)."""
+def export_model(rig, objs):
+    """Save the .blend and export glTF binary + FBX: skinned parts, the
+    skeleton and the animation clips."""
     bpy.ops.file.pack_all()
     blend = os.path.join(ROOT, "glock17_gen4.blend")
     bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
     vl = bpy.context.view_layer
     for o in bpy.context.scene.objects:
         o.select_set(False)
-    for o in [root] + list(objs):
+    for o in [rig] + list(objs):
         o.select_set(True)
-    vl.objects.active = root
+    vl.objects.active = rig
     bpy.ops.export_scene.gltf(
         filepath=os.path.join(ROOT, "glock17_gen4.glb"),
         export_format="GLB", use_selection=True, export_apply=True,
-        export_yup=True, export_image_format="AUTO")
+        export_yup=True, export_image_format="AUTO", export_skins=True,
+        export_animations=True, export_animation_mode="ACTIONS",
+        export_def_bones=False, export_frame_range=False)
     # FBX: triangulate on export so tangents can be written for normal maps
     for o in objs:
         m = o.modifiers.new("export_tri", "TRIANGULATE")
         m.keep_custom_normals = True
         m.quad_method = "BEAUTY"
+        o.modifiers.move(len(o.modifiers) - 1, 0)
     bpy.ops.export_scene.fbx(
         filepath=os.path.join(ROOT, "glock17_gen4.fbx"),
-        use_selection=True, object_types={"EMPTY", "MESH"},
+        use_selection=True, object_types={"ARMATURE", "MESH"},
         use_mesh_modifiers=True, apply_unit_scale=True,
         apply_scale_options="FBX_SCALE_UNITS", axis_forward="-Z", axis_up="Y",
         mesh_smooth_type="OFF", use_tspace=True, path_mode="COPY",
-        embed_textures=True)
+        embed_textures=True, add_leaf_bones=False, bake_anim=True,
+        bake_anim_use_all_actions=True, bake_anim_use_nla_strips=False,
+        bake_anim_force_startend_keying=True, bake_anim_simplify_factor=0.0)
     for o in objs:
         o.modifiers.remove(o.modifiers["export_tri"])
         o.select_set(False)
-    root.select_set(False)
+    rig.select_set(False)
     return blend
 
 
@@ -1107,7 +1311,9 @@ def render_wireframe(objs, view="hero", res=(1920, 1200), samples=64):
 
 
 if __name__ == "__main__":
-    root, objs, size = build_model()
+    import glock_anim
+    rig, objs, size = build_model()
+    glock_anim.create_actions(rig)
     f, t = poly_stats(objs)
     print(f"faces={f} tris={t}")
     os.makedirs(RENDER_DIR, exist_ok=True)
@@ -1131,12 +1337,11 @@ if __name__ == "__main__":
         tgt = mm(*tgt_mm)
         bpy.context.scene.camera = add_camera("Camera", tgt + sph(dist, yaw, elev),
                                               tgt, lens)
-        LIGHT_RIG.rotation_euler = (0.0, 0.0, math.radians(-yaw))
-        LIGHT_RIG.location = tgt
+        aim_light_rig(tgt, yaw)
         bpy.context.scene.render.resolution_x = 1920
         bpy.context.scene.render.resolution_y = 1200
         bpy.context.scene.cycles.samples = 256
-        print("saved", export_model(root, objs))
+        print("saved", export_model(rig, objs))
         if not NO_RENDER:
             views = ONLY_VIEWS.split(",") if ONLY_VIEWS else (
                 MAIN_VIEWS + ["cu_grip", "cu_trigger", "cu_rear", "cu_muzzle",

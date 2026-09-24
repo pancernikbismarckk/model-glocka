@@ -437,3 +437,163 @@ SLIDE_STOP_GUARD = [(122.6, -27.6), (123.4, -29.3), (125.2, -30.2),
                     (139.2, -29.3), (140.0, -27.6)]
 MAG_CATCH = dict(cx=131.0, cz=-53.5, along=10.5, across=9.0, angle=21.0)
 GRIP_LOGO = dict(x=173.3, z=-98.4, w=10.6, h=8.6)
+
+# --------------------------------------------------------------------------
+# Magazine and magazine well.  The magazine body is a slanted prism: at
+# height z its front/back X are MAG_X0/MAG_X1 at MAG_ZB shifted forward by
+# (z - MAG_ZB) * tan(MAG_ANGLE).
+# --------------------------------------------------------------------------
+MAG_ANGLE = 21.0
+MAG_TAN = math.tan(math.radians(MAG_ANGLE))
+MAG_X0, MAG_X1 = 152.0, 185.8
+MAG_ZB, MAG_ZT = -126.4, -22.3             # body bottom / top (feed lips)
+MAG_HW = 11.2
+MAG_RF, MAG_RB = 6.0, 2.0                  # section corner radii (front, back)
+MAG_WELL_CLEAR = 0.3
+# direction in which the magazine leaves the grip (build mm, unit vector)
+MAG_DROP_DIR = (math.sin(math.radians(MAG_ANGLE)), 0.0,
+                -math.cos(math.radians(MAG_ANGLE)))
+
+
+def mag_x_range(z):
+    s = (z - MAG_ZB) * MAG_TAN
+    return MAG_X0 - s, MAG_X1 - s
+
+
+def mag_section(z, grow=0.0, seg90=4):
+    """Horizontal section (x, y) of the magazine body at height z, grown by
+    `grow` mm (clearance of the magazine well)."""
+    xa, xb = mag_x_range(z)
+    hw = MAG_HW + grow
+    rf, rb = MAG_RF + grow, MAG_RB + grow
+    return rounded_poly([(xa - grow, -hw, rf), (xb + grow, -hw, rb),
+                         (xb + grow, hw, rb), (xa - grow, hw, rf)], seg90)
+
+
+# Hollow parts of the frame (openings only; the solid in between is hidden):
+# the magazine well mouth under the grip and the pocket under the slide
+MAG_WELL_BOTTOM = (-140.0, -95.0)          # z range of the lower pocket
+MAG_WELL_FLARE = 0.6                       # flare of the mouth (mm)
+MAG_WELL_TOP = (-35.0, -10.0)              # z range of the upper pocket
+
+# Cavity inside the slide under the ejection port (seen when the slide is
+# back) and the chamber (the casing head is flush with the barrel hood)
+SLIDE_CAVITY = (PORT_X0, PORT_X1, 8.7, -21.5, -3.0)   # x0, x1, half y, z0, z1
+CHAMBER_X = 114.9
+CHAMBER_R = 5.05
+SLIDE_TRAVEL = 34.0         # full recoil stroke
+SLIDE_LOCK_TRAVEL = 31.0    # slide held open by the slide stop
+BARREL_TRAVEL = 3.0         # barrel moves back with the slide, then drops
+BARREL_TILT = 1.1           # degrees (rear end down) when unlocked
+
+# --------------------------------------------------------------------------
+# 9x19 mm Parabellum cartridge (C.I.P. dimensions).  Lathe profiles (x, r):
+# x along the cartridge axis, 0 = case head, +x towards the bullet.
+# --------------------------------------------------------------------------
+CASE_LEN = 19.15
+CARTRIDGE_LEN = 29.69
+_CASE_HEAD = [
+    (0.10, 0.0), (0.10, 2.05), (0.0, 2.25),        # primer
+    (0.0, 4.72), (0.12, 4.98), (1.05, 4.98),       # head face, rim
+    (1.27, 4.72), (1.35, 4.02), (1.95, 4.02),      # extractor groove
+    (2.55, 4.965),                                  # base of the body
+]
+CASE_PROFILE = _CASE_HEAD + [
+    (CASE_LEN, 4.825), (CASE_LEN, 4.52),           # tapered body, mouth
+    (6.2, 4.40), (5.6, 3.6), (5.4, 0.0),           # inside of the case
+]
+
+
+def _bullet_nose(x0, x1, r, n=7):
+    """Round-nose FMJ ogive (quarter ellipse) from x0 to the tip at x1."""
+    pts = []
+    for k in range(1, n + 1):
+        a = math.radians(84.0 * k / n)
+        pts.append((x0 + (x1 - x0) * math.sin(a), r * math.cos(a)))
+    return pts + [(x1, 0.0)]
+
+
+CARTRIDGE_PROFILE = _CASE_HEAD + [
+    (CASE_LEN, 4.825), (CASE_LEN, 4.505), (22.0, 4.505),
+] + _bullet_nose(22.0, CARTRIDGE_LEN, 4.505)
+
+# top round in the magazine: head X and axis Z (horizontal, points forward)
+MAG_ROUND_HEAD_X = 144.6
+MAG_ROUND_Z = -24.3
+
+# --------------------------------------------------------------------------
+# GTA V orientation.  Build mm -> GTA metres: X forward (muzzle), Y left,
+# Z up, origin where the standard GTA pistol skeleton has it, so the grip
+# lines up with the ped's hand:  X = (89.5 - x) / 1000, Y = -y / 1000,
+# Z = (z + 51.76) / 1000
+# --------------------------------------------------------------------------
+GTA_ORIGIN_MM = (89.5, 0.0, -51.76)
+
+# Weapon skeleton.  ("local", (t, q)) is a transform relative to the parent
+# bone (metres, quaternion x, y, z, w as in CodeWalker XML) copied from the
+# standard pistol skeleton: those bones are animated by the game's pistol
+# clips (slide recoil, trigger), so their rest pose must match.  ("mm", (p, q))
+# places a bone at point p of this model (build mm) with rotation q in GTA
+# space.  Custom bones (after WAPSupp) are only used by this model's clips.
+GTA_BONES = [
+    ("Gun_Root", None, "local", ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_GripR", "Gun_Root", "local",
+     ((-0.118278, -0.015998, -0.047679),
+      (0.6552189, -0.0031388, 0.0380732, 0.7544724))),
+    ("Gun_Main_Bone", "Gun_GripR", "local",
+     ((0.121391, 0.042062, -0.00374),
+      (-0.6552188, 0.0031391, -0.0380733, 0.7544725))),
+    ("Gun_Trigger_Pr", "Gun_Main_Bone", "local",
+     ((-0.012811, -3.6e-05, 0.009202), (0.8646954, 0.0, -0.5022964, 0.0))),
+    ("Gun_Cock1", "Gun_Main_Bone", "local",
+     ((-0.018411, -3.6e-05, 0.033822), (0.9999999, 0.0, -0.000175, 0.0))),
+    ("Gun_Hammer", "Gun_Main_Bone", "local",
+     ((-0.081533, -3.6e-05, 0.02503), (0.6214617, 0.0, 0.7834446, 0.0))),
+    ("Gun_Safety", "Gun_Main_Bone", "local",
+     ((-0.077974, -3.6e-05, 0.020796), (0.9998599, 0.0, 0.0167412, 0.0))),
+    ("Gun_VFX_Eject", "Gun_Main_Bone", "mm",
+     ((100.0, 8.0, -4.2), (0.0, 0.0, -0.7071068, 0.7071068))),
+    ("Gun_Muzzle", "Gun_Main_Bone", "mm",
+     ((0.0, 0.0, BORE_Z), (0.9999999, 0.0, 0.0001814, 0.0))),
+    ("WAPClip", "Gun_Main_Bone", "local",
+     ((-0.054254, -1.7e-05, 0.022823), (0.0, 0.0, 0.0, 1.0))),
+    ("WAPFlshLasr", "Gun_Main_Bone", "mm",
+     ((21.7, 0.0, -40.2), (0.0, 0.0, 0.0, 1.0))),
+    ("WAPSupp", "Gun_Main_Bone", "mm",
+     ((0.0, 0.0, BORE_Z), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_Barrel", "Gun_Main_Bone", "mm",
+     ((1.0, 0.0, BORE_Z), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_TriggerSafety", "Gun_Trigger_Pr", "mm",
+     ((101.2, 0.0, -46.0), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_SlideStop", "Gun_Main_Bone", "mm",
+     ((106.0, 0.0, -24.0), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_MagRelease", "Gun_Main_Bone", "mm",
+     ((MAG_CATCH["cx"], 0.0, MAG_CATCH["cz"]), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_MagRound", "WAPClip", "mm",
+     ((MAG_ROUND_HEAD_X - CARTRIDGE_LEN / 2, 0.0, MAG_ROUND_Z),
+      (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_Shell", "Gun_Main_Bone", "mm",
+     ((CHAMBER_X - CASE_LEN / 2, 0.0, BORE_Z), (0.0, 0.0, 0.0, 1.0))),
+    ("Gun_Flash", "Gun_Main_Bone", "mm",
+     ((2.0, 0.0, BORE_Z), (0.0, 0.0, 0.0, 1.0))),
+]
+# build-mm points of the bones placed on this model
+BONE_POINT_MM = {b[0]: b[3][0] for b in GTA_BONES if b[2] == "mm"}
+GTA_PISTOL_BONES = 12        # the first 12 bones form the standard skeleton
+
+# which bone each part of the model follows
+PART_BONES = {
+    "Slide": "Gun_Cock1",
+    "Barrel": "Gun_Barrel",
+    "RecoilSpringGuide": "Gun_Main_Bone",
+    "Frame": "Gun_Main_Bone",
+    "Trigger": "Gun_Trigger_Pr",
+    "TriggerSafety": "Gun_TriggerSafety",
+    "SlideStop": "Gun_SlideStop",
+    "MagazineCatch": "Gun_MagRelease",
+    "Magazine": "WAPClip",
+    "MagazineRound": "Gun_MagRound",
+    "Casing": "Gun_Shell",
+    "MuzzleFlash": "Gun_Flash",
+}
+FLASH_REST_SCALE = 0.01      # the flash is modelled collapsed in the bore
